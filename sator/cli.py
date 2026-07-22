@@ -15,7 +15,7 @@ from sator.title import parse_title, ParsedTitle
 from sator.size import parse_size, bytes_to_human
 from sator.wikidata import get_wikidata_original_lang
 from sator.filter import filter_result_json
-from sator.indexer import search_all, TorrentResult
+from sator.indexer import search_all, TorrentResult, INDEXERS
 from sator.qb_client import _qb_add_simple
 from sator.process import _process_query_internal, TRACKER_LABELS
 
@@ -107,16 +107,6 @@ def cmd_search(args: List[str]):
         d['quality'] = asdict(r.quality)
         d['languages'] = r.languages
         out.append(d)
-    # Save magnets to file if requested
-    if parsed.output and out['magnets']:
-        try:
-            with open(parsed.output, 'w') as f:
-                for m in out['magnets']:
-                    f.write(m + '\n')
-        except OSError as e:
-            print(json.dumps({"error": f"Failed to write {parsed.output}: {e}"}))
-            sys.exit(1)
-
     print(json.dumps(out))
 
 
@@ -230,16 +220,6 @@ def cmd_search_all(args: List[str]):
         d['quality'] = asdict(r.quality)
         d['languages'] = r.languages
         out.append(d)
-    # Save magnets to file if requested
-    if parsed.output and out['magnets']:
-        try:
-            with open(parsed.output, 'w') as f:
-                for m in out['magnets']:
-                    f.write(m + '\n')
-        except OSError as e:
-            print(json.dumps({"error": f"Failed to write {parsed.output}: {e}"}))
-            sys.exit(1)
-
     print(json.dumps(out))
 
 
