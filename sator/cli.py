@@ -631,8 +631,8 @@ qBittorrent:
     print(f'  Time:         {duration // 60}m {duration % 60}s', file=sys.stderr)
     
     # ── Output magnets ─────────────────────────────────────────────────────
-    # To stdout (if not auto-add)
-    if not auto_add:
+    # To stdout (if not auto-add and no -o file)
+    if not auto_add and not parsed.output:
         for t in all_torrents:
             if t.get('magnet'):
                 print(t['magnet'])
