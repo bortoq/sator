@@ -194,7 +194,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             if verbose:
                 size_h_raw = bytes_to_human(d.get('size_bytes', 0))
                 seed_raw = d.get('seeders', 0)
-                print(f'  \u2717 {d.get("title", "")}  ({size_h_raw}) [{d.get("source", "")}] \U0001f9f2:{seed_raw}', file=sys.stderr, flush=True)
+                print(f'  \u2717 {d.get("title", "")}  ({size_h_raw}) [{d.get("source", "")}] seeds:{seed_raw}', file=sys.stderr, flush=True)
             continue
         
         out['found'] += 1
@@ -216,7 +216,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         size_h = bytes_to_human(size_bytes)
         
         out['display_lines'].append(f"  \u2713 {title}")
-        out['display_lines'].append(f"    {qlabel} ({size_h}) [{source}] \U0001f9f2:{seeders}")
+        out['display_lines'].append(f"    {qlabel} ({size_h}) [{source}] seeds:{seeders}")
         if magnet:
             out['display_lines'].append(f"    {magnet}")
         out['torrents'].append({
@@ -252,7 +252,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         seeders = best.get('seeders', 0)
         out['display_lines'] = [
             f"  \u2713 {title}",
-            f"    {qlabel} ({size_h}) [best, score: {best_score:.0f}] \U0001f9f2:{seeders}",
+            f"    {qlabel} ({size_h}) [best, score: {best_score:.0f}] seeds:{seeders}",
         ]
         if best.get('magnet'):
             out['display_lines'].append(f"    {best['magnet']}")
