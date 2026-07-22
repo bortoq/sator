@@ -6,6 +6,7 @@ from typing import Optional
 from sator.quality import parse_quality
 from sator.language import parse_languages
 from sator.iso_langs import iso_name
+from sator.exclude import is_excluded
 
 def filter_result_json(result: dict, filters: dict) -> Optional[dict]:
     """Filter a torrent result dict against filter criteria.
@@ -13,6 +14,11 @@ def filter_result_json(result: dict, filters: dict) -> Optional[dict]:
     """
     title = result.get('title', '')
     size_bytes = int(result.get('size_bytes', 0))
+
+    # Blacklist check (first, before any other filter)
+    excludes = filters.get('excludes', [])
+    if excludes and is_excluded(title, excludes):
+        return None
 
     # Resolution bounds
     rl = filters.get('rl')

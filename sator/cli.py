@@ -247,6 +247,16 @@ def cmd_process_query(args: List[str]):
                        help='Verbose output: per-tracker details')
     parser.add_argument('-tt', '--tracker-titles', action='store_true', default=False,
                        help='Show tracker names at start')
+    parser.add_argument('-m', '--more', action='store_true', default=False,
+                       help='Show all filtered results instead of best one')
+    parser.add_argument('--exclude', type=str, default='',
+                       help='Exclude patterns (comma-separated, e.g. CAM,TS,SCR)')
+    parser.add_argument('--enrich', action='store_true', default=True,
+                       help='Enable TMDB enrichment (default)')
+    parser.add_argument('--no-enrich', action='store_false', dest='enrich',
+                       help='Disable TMDB enrichment')
+    parser.add_argument('--tmdb-key', type=str, default='',
+                       help='TMDB API key (overrides config file)')
     # Normalize -help to --help
     args = ['--help' if a == '-help' else a for a in args]
     try:
@@ -410,6 +420,10 @@ Filters (each at most once):
   -rb RES    Resolution lower bound, e.g. 720p
   -zl SIZE   Size upper bound, suffixes k/m/g/t
   -zb SIZE   Size lower bound, suffixes k/m/g/t
+
+More / Exclude:
+  -m, --more             Show all filtered results (default: best only)
+  --exclude PATTERNS     Exclude patterns, comma-separated (CAM,TS,SCR...)
 
 Filters (repeatable):
   -l [LANG]  Audio language (ISO 639-1 code or name).
@@ -575,13 +589,17 @@ qBittorrent:
         if zb is not None: filters['zb'] = zb
         if current_lang: filters['lang'] = current_lang
         if subs_filters: filters['subs'] = subs_filters
+        if parsed.exclude: filters['excludes'] = [x.strip() for x in parsed.exclude.split(',') if x.strip()]
+        if parsed.tmdb_key: filters['tmdb_key'] = parsed.tmdb_key
+        filters['tmdb_enrich'] = parsed.enrich
         # Call internal processing
         result = _process_query_internal(q, filters, auto_add, parsed.qb_url,
                                         parsed.category, parsed.tags,
                                         verbose=parsed.verbose,
                                         show_tracker_titles=parsed.tracker_titles,
                                         query_num=num, total_queries=total,
-                                        trackers=parsed.trackers)
+                                        trackers=parsed.trackers,
+                                        best_mode=not parsed.more)
         
         if not result.get('found_any'):
             if not parsed.verbose:
