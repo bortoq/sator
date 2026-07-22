@@ -382,7 +382,7 @@ def cmd_run(args: List[str]):
     
     # Tracker selection
     parser.add_argument('-T', '--trackers', nargs='+', default=None,
-                       help='Trackers to search (space-separated, e.g. nyaa tpb)')
+                       help='Trackers: nyaa tpb yts solidtorrents eztv tgx (space-separated)')
     
     # qBittorrent options
     parser.add_argument('--category', default='')

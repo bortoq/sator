@@ -57,10 +57,14 @@ TRACKER_LABELS = {
     'nyaa': 'Nyaa',
     'tpb': 'PirateBay',
     'limetorrents': 'LimeTorrents',
+    'yts': 'YTS',
+    'solidtorrents': 'SolidTorrents',
+    'eztv': 'EZTV',
+    'tgx': 'TorrentGalaxy',
 }
 
 # Fixed order for compact status chars
-TRACKER_ORDER = ['nyaa', 'tpb', 'limetorrents']
+TRACKER_ORDER = ['nyaa', 'tpb', 'yts', 'solidtorrents', 'eztv', 'tgx', 'limetorrents']
 
 def _make_progress_cb(query_num: int, total_queries: int, query: str,
                        verbose: bool, status_chars: list,

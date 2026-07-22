@@ -9,7 +9,7 @@ from sator.title import parse_title, ParsedTitle
 from sator.size import parse_size, bytes_to_human
 from sator.wikidata import get_wikidata_original_lang
 from sator.filter import filter_result_json
-from sator.indexer import search_all, TorrentResult, NyaaIndexer, TPBIndexer, LimeTorrentsIndexer
+from sator.indexer import search_all, TorrentResult, NyaaIndexer, TPBIndexer, LimeTorrentsIndexer, YTSIndexer, SolidTorrentsIndexer, EZTVIndexer, TGxIndexer
 from sator.qb_client import QBClient, QBConfig, _qb_add_simple
 from sator.exclude import is_excluded, _DEFAULT_EXCLUDES
 from sator.tmdb import enrich_query

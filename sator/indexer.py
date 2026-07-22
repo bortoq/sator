@@ -205,11 +205,227 @@ class LimeTorrentsIndexer(BaseIndexer):
         return results
 
 
+
+
+
+# ── YTS (Yify) — JSON API, movies only, high quality ─────────────────────
+
+class YTSIndexer(BaseIndexer):
+    """YTS (Yify) movie torrent indexer via JSON API."""
+    name = "yts"
+
+    def search(self, query: str) -> List[TorrentResult]:
+        sq = urllib.parse.quote(query)
+        url = f"https://yts.mx/api/v2/list_movies.json?query_term={sq}&limit=50"
+        try:
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+            })
+            resp = urllib.request.urlopen(req, timeout=15)
+            data = json.loads(resp.read().decode())
+        except Exception:
+            return []
+
+        movies = data.get('data', {}).get('movies', [])
+        if not movies:
+            return []
+
+        results = []
+        for movie in movies:
+            title = movie.get('title', '')
+            year = movie.get('year', '')
+            display_title = f"{title} {year}" if year else title
+            torrents = movie.get('torrents', [])
+            for t in torrents:
+                quality = t.get('quality', '')
+                ttype = t.get('type', '')  # 'bluray' or 'web'
+                size_str = t.get('size', '0')
+                seeds = int(t.get('seeds', 0))
+                peers = int(t.get('peers', 0))
+                ih = t.get('hash', '')
+                if not ih:
+                    continue
+                # Build magnet from info_hash + common YTS trackers
+                magnet = (
+                    f"magnet:?xt=urn:btih:{ih}"
+                    f"&dn={urllib.parse.quote(display_title)}"
+                    f"&tr=udp://tracker.coppersurfer.tk:6969/announce"
+                    f"&tr=udp://tracker.leechers-paradise.org:6969/announce"
+                    f"&tr=udp://tracker.opentrackr.org:1337/announce"
+                    f"&tr=udp://open.demonii.com:1337/announce"
+                )
+                # Parse size from string like "2.5 GB"
+                size_bytes = 0
+                sm = re.match(r'([0-9.]+)\s*(GB|MB|KB|TB)', size_str, re.I)
+                if sm:
+                    num = float(sm.group(1))
+                    unit = sm.group(2).upper()
+                    if unit == 'TB':
+                        size_bytes = int(num * 10**12)
+                    elif unit == 'GB':
+                        size_bytes = int(num * 10**9)
+                    elif unit == 'MB':
+                        size_bytes = int(num * 10**6)
+                    elif unit == 'KB':
+                        size_bytes = int(num * 10**3)
+                # Compose quality label for scoring
+                quality_label = f"{quality} {ttype.title()}" if ttype else quality
+                title_tag = f"{display_title} {quality_label}"
+                results.append(TorrentResult(
+                    title=title_tag, magnet=magnet, size_bytes=size_bytes,
+                    seeders=seeds + peers, source="yts"
+                ))
+        return results
+
+
+# ── SolidTorrents — JSON API, meta-search ───────────────────────────────
+
+class SolidTorrentsIndexer(BaseIndexer):
+    """SolidTorrents meta-search indexer via JSON API."""
+    name = "solidtorrents"
+
+    def search(self, query: str) -> List[TorrentResult]:
+        sq = urllib.parse.quote(query)
+        url = f"https://solidtorrents.net/api/v1/search?q={sq}"
+        try:
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+            })
+            resp = urllib.request.urlopen(req, timeout=15)
+            data = json.loads(resp.read().decode())
+        except Exception:
+            return []
+
+        items = data.get('results', []) if isinstance(data, dict) else []
+        results = []
+        for item in items[:50]:
+            name = item.get('name', '')
+            if not name:
+                continue
+            magnet = item.get('magnet', '')
+            size_bytes = int(item.get('size', 0))
+            seeds = int(item.get('seeders', 0))
+            results.append(TorrentResult(
+                title=htmlmod.unescape(name), magnet=magnet,
+                size_bytes=size_bytes, seeders=seeds, source="solidtorrents"
+            ))
+        return results
+
+
+# ── EZTV — TV episodes via HTML scraping ────────────────────────────────
+
+class EZTVIndexer(BaseIndexer):
+    """EZTV torrent indexer (TV shows/episodes)."""
+    name = "eztv"
+
+    def search(self, query: str) -> List[TorrentResult]:
+        sq = urllib.parse.quote(query)
+        url = f"https://eztvx.to/search/{sq}"
+        try:
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+            })
+            resp = urllib.request.urlopen(req, timeout=15)
+            html = resp.read().decode('utf-8', errors='replace')
+        except Exception:
+            return []
+
+        results = []
+        for row in re.findall(r'<tr[^>]*name="hover"[^>]*>(.*?)</tr>', html, re.DOTALL):
+            # Title
+            tm = re.search(r'href="/ep/[^"]+"\s+[^>]*>([^<]+)</a>', row)
+            if not tm:
+                continue
+            title = htmlmod.unescape(tm.group(1)).strip()
+            # Magnet
+            mm = re.search(r'href="(magnet:[^"]*)"', row)
+            if not mm:
+                continue
+            magnet = htmlmod.unescape(mm.group(1))
+            # Size
+            sm = re.search(r'<td[^>]*class[^>]*>[^<]*</td>\s*<td[^>]*class[^>]*>\s*([0-9.]+)\s*(GB|MB|KB)\s*</td>', row, re.DOTALL)
+            size_bytes = 0
+            if sm:
+                num = float(sm.group(1))
+                unit = sm.group(2).upper()
+                if unit == 'GB':
+                    size_bytes = int(num * 10**9)
+                elif unit == 'MB':
+                    size_bytes = int(num * 10**6)
+                elif unit == 'KB':
+                    size_bytes = int(num * 10**3)
+            # Seeders
+            sdm = re.search(r'<td[^>]*class[^>]*>\s*(\d+)\s*</td>\s*<td[^>]*class[^>]*>\s*\d+\s*</td>\s*<td[^>]*class[^>]*>', row, re.DOTALL)
+            seeders = int(sdm.group(1)) if sdm else 0
+            results.append(TorrentResult(
+                title=title, magnet=magnet, size_bytes=size_bytes,
+                seeders=seeders, source="eztv"
+            ))
+        return results
+
+
+# ── TorrentGalaxy (TGx) — general torrents via HTML scraping ───────────
+
+class TGxIndexer(BaseIndexer):
+    """TorrentGalaxy torrent indexer (movies, TV, games, apps)."""
+    name = "tgx"
+
+    def search(self, query: str) -> List[TorrentResult]:
+        sq = urllib.parse.quote(query)
+        url = f"https://torrentgalaxy.to/torrents.php?search={sq}&sort=seeders&order=desc"
+        try:
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+            })
+            resp = urllib.request.urlopen(req, timeout=15)
+            html = resp.read().decode('utf-8', errors='replace')
+        except Exception:
+            return []
+
+        results = []
+        for row in re.findall(r'<div[^>]*class="[^"]*tgxtable[^"]*"[^>]*>(.*?)</div>\s*</div>', html, re.DOTALL):
+            # Title
+            tm = re.search(r'<a[^>]*href="/torrent/\d+/[^"]*"[^>]*>\s*([^<]+)\s*</a>', row)
+            if not tm:
+                continue
+            title = htmlmod.unescape(tm.group(1)).strip()
+            # Magnet
+            mm = re.search(r'href="(magnet:[^"]*)"', row)
+            if not mm:
+                continue
+            magnet = htmlmod.unescape(mm.group(1))
+            # Size
+            sm = re.search(r'<span[^>]*class="[^"]*badge[^"]*"[^>]*>\s*([0-9.]+)\s*(TB|GB|MB|KB)\s*</span>', row, re.I)
+            size_bytes = 0
+            if sm:
+                num = float(sm.group(1))
+                unit = sm.group(2).upper()
+                if unit == 'TB':
+                    size_bytes = int(num * 10**12)
+                elif unit == 'GB':
+                    size_bytes = int(num * 10**9)
+                elif unit == 'MB':
+                    size_bytes = int(num * 10**6)
+                elif unit == 'KB':
+                    size_bytes = int(num * 10**3)
+            # Seeders
+            sdm = re.search(r'<td[^>]*>\s*(\d+)\s*</td>\s*<td[^>]*>\s*\d+\s*</td>', row, re.DOTALL)
+            seeders = int(sdm.group(1)) if sdm else 0
+            results.append(TorrentResult(
+                title=title, magnet=magnet, size_bytes=size_bytes,
+                seeders=seeders, source="tgx"
+            ))
+
+
 # Registry of available indexers
 INDEXERS = {
     'nyaa': NyaaIndexer(),
     'tpb': TPBIndexer(),
     'limetorrents': LimeTorrentsIndexer(),
+    'yts': YTSIndexer(),
+    'solidtorrents': SolidTorrentsIndexer(),
+    'eztv': EZTVIndexer(),
+    'tgx': TGxIndexer(),
 }
 
 def search_all(query: str, trackers: List[str] = None,
@@ -240,4 +456,3 @@ def search_all(query: str, trackers: List[str] = None,
                 progress_cb(name, 'error', 0, str(e))
             continue
     return results
-
