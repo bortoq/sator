@@ -437,6 +437,9 @@ Filters (each at most once):
   -zl SIZE   Size upper bound, suffixes k/m/g/t
   -zb SIZE   Size lower bound, suffixes k/m/g/t
 
+Trackers:
+  -T TRACKERS            Trackers: nyaa tpb yts solidtorrents eztv tgx (space-separated)
+
 More / Exclude:
   -m, --more             Show all filtered results (default: best only)
   -e, --exclude PATTERNS Exclude patterns, comma-separated (CAM,TS,SCR...)
