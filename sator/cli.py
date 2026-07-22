@@ -313,6 +313,7 @@ DEFAULTS = {
     'zb': '200m',       # size lower bound (not smaller than 200 MiB)
     'zl': '8g',         # size upper bound (not larger than 8 GiB)
     'lang': ['__original__'],  # audio language: original via Wikidata
+    'subs': ['en'],     # subtitle language: English
     'trackers': ['nyaa', 'tpb'],  # active trackers only
 }
 
@@ -333,9 +334,9 @@ def apply_defaults(args: argparse.Namespace) -> argparse.Namespace:
     if args.lang is None:
         args.lang = list(DEFAULTS['lang'])
     
-    # Subtitles: no default — only filter when -t is explicitly passed
+    # Subtitles: None (not provided) → ['en']
     if args.subs is None:
-        args.subs = None
+        args.subs = list(DEFAULTS['subs'])
     
     # Trackers: None (not provided) → ['nyaa', 'tpb']
     if getattr(args, 'trackers', None) is None:
