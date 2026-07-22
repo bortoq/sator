@@ -194,7 +194,14 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             if verbose:
                 size_h_raw = bytes_to_human(d.get('size_bytes', 0))
                 seed_raw = d.get('seeders', 0)
-                print(f'  \u2717 {d.get("title", "")}  ({size_h_raw}) [{d.get("source", "")}] seeds:{seed_raw}', file=sys.stderr, flush=True)
+                # Short size: "151G" not "151.0 GiB"
+                sz = '0'
+                if size_h_raw:
+                    parts = size_h_raw.split()
+                    num = parts[0].split('.')[0] if '.' in parts[0] else parts[0]
+                    unit = parts[1][0] if len(parts) > 1 else 'B'
+                    sz = f'{num}{unit}'
+                print(f'  \u2717 {sz} | {d.get("title", "")} | seeds:{seed_raw}', file=sys.stderr, flush=True)
             continue
         
         out['found'] += 1
