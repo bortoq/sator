@@ -190,6 +190,11 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             # Track per-tracker filtered count
             if r.source in filtered_out:
                 filtered_out[r.source] += 1
+            # In verbose mode, show filtered-out items too
+            if verbose:
+                size_h_raw = bytes_to_human(d.get('size_bytes', 0))
+                seed_raw = d.get('seeders', 0)
+                print(f'  \u2717 {d.get("title", "")}  ({size_h_raw}) [{d.get("source", "")}] \U0001f9f2:{seed_raw}', file=sys.stderr, flush=True)
             continue
         
         out['found'] += 1
