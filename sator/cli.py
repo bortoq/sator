@@ -249,7 +249,7 @@ def cmd_process_query(args: List[str]):
                        help='Show tracker names at start')
     parser.add_argument('-m', '--more', action='store_true', default=False,
                        help='Show all filtered results instead of best one')
-    parser.add_argument('--exclude', type=str, default='',
+    parser.add_argument('-e', '--exclude', type=str, default='',
                        help='Exclude patterns (comma-separated, e.g. CAM,TS,SCR)')
     parser.add_argument('--enrich', action='store_true', default=True,
                        help='Enable TMDB enrichment (default)')
@@ -423,7 +423,7 @@ Filters (each at most once):
 
 More / Exclude:
   -m, --more             Show all filtered results (default: best only)
-  --exclude PATTERNS     Exclude patterns, comma-separated (CAM,TS,SCR...)
+  -e, --exclude PATTERNS Exclude patterns, comma-separated (CAM,TS,SCR...)
 
 Filters (repeatable):
   -l [LANG]  Audio language (ISO 639-1 code or name).
