@@ -35,10 +35,36 @@ WIKIDATA_ISO = {
     'Q33350': 'ce', 'Q13307': 'na', 'Q33823': 'ne', 'Q9260': 'tg',
 }
 
+# Noise words to strip before Wikidata lookup
+_NOISE_WORDS = (
+    'complete', 'series', 'season', 's\d+', 'episode', 'e\d+',
+    '1080p', '720p', '2160p', '480p', '4k', 'uhd',
+    'bluray', 'blu-ray', 'bdrip', 'bd-rip', 'brrip',
+    'webdl', 'web-dl', 'webrip', 'web-rip', 'hdtv', 'hdtvrip',
+    'x264', 'x265', 'hevc', 'h264', 'h265', 'avc',
+    'aac', 'ac3', 'dts', 'flac', 'mp3',
+    'multi', 'dual', 'proper', 'repack', 'internal', 'readnfo',
+    'flux', 'ntb', 'sparks', 'yify', 'rarbg', 'tigole', 'paw',
+)
+
+def _clean_query(raw: str) -> str:
+    '''Remove torrent noise words from query for better search results.'''
+    s = raw.lower()
+    # Remove noise words
+    for pat in _NOISE_WORDS:
+        s = re.sub(r'\b' + pat + r'\b', '', s)
+    # Remove extra spaces
+    s = re.sub(r'\s+', ' ', s).strip()
+    s = s.strip(' -_').strip()
+    return s or raw
+
 def get_wikidata_original_lang(query: str, cache_file: str = "") -> str:
     """Get original language ISO code for a movie via Wikidata.
     Returns ISO 639-1 code or empty string.
     """
+    # Clean query: strip torrent noise words for better Wikipedia search
+    query = _clean_query(query)
+    
     # Check cache
     if cache_file and os.path.exists(cache_file):
         try:
