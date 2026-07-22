@@ -217,7 +217,8 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         
         out['display_lines'].append(f"  \u2713 {title}")
         out['display_lines'].append(f"    {qlabel} ({size_h}) [{source}] seeds:{seeders}")
-        if magnet:
+        # Only show magnet on terminal when no -o (to avoid clutter)
+        if magnet and not output_file:
             out['display_lines'].append(f"    {magnet}")
         out['torrents'].append({
             'title': title,
@@ -254,7 +255,8 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             f"  \u2713 {title}",
             f"    {qlabel} ({size_h}) [best, score: {best_score:.0f}] seeds:{seeders}",
         ]
-        if best.get('magnet'):
+        # Only show magnet on terminal when no -o
+        if best.get('magnet') and not output_file:
             out['display_lines'].append(f"    {best['magnet']}")
         
         # Add best torrent to qB

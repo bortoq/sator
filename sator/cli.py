@@ -618,7 +618,7 @@ qBittorrent:
         filters['tmdb_enrich'] = parsed.enrich
         # Call internal processing
         result = _process_query_internal(q, filters, auto_add, parsed.qb_url,
-                                        parsed.category, parsed.tags,
+                                        parsed.category, parsed.tags, parsed.output,
                                         verbose=parsed.verbose,
                                         show_tracker_titles=parsed.tracker_titles,
                                         query_num=num, total_queries=total,
