@@ -57,6 +57,9 @@ class NyaaIndexer(BaseIndexer):
             if not mm:
                 continue
             magnet = htmlmod.unescape(mm.group(1))
+            # Extract detail page URL
+            um = re.search(r'href="(/view/\d+)"', r)
+            info_url = "https://nyaa.si" + um.group(1) if um else ""
             sm = re.search(r'<td class="text-center">([0-9.]+)\s*(KiB|MiB|GiB|TiB)\s*</td>', r)
             size_bytes = 0
             if sm:
@@ -79,7 +82,7 @@ class NyaaIndexer(BaseIndexer):
                     seeders = 0
             results.append(TorrentResult(
                 title=title, magnet=magnet, size_bytes=size_bytes,
-                seeders=seeders, source="nyaa"
+                seeders=seeders, source="nyaa", info_url=info_url
             ))
         return results
 
@@ -122,6 +125,12 @@ class TPBIndexer(BaseIndexer):
             if not tm:
                 continue
             title = htmlmod.unescape(tm.group(1)).strip()
+            # Extract detail page URL
+            um = re.search(r'href="([^"]*/torrent/\d+/[^"]*)"', r)
+            info_url = um.group(1) if um else ""
+            # Ensure absolute URL
+            if info_url and not info_url.startswith('http'):
+                info_url = "https://tpb.party" + info_url
             mm = re.search(r'href="(magnet:[^"]*)"', r)
             if not mm:
                 continue
@@ -145,7 +154,7 @@ class TPBIndexer(BaseIndexer):
             seeders = int(tds[0]) if tds else 0
             results.append(TorrentResult(
                 title=title, magnet=magnet, size_bytes=size_bytes,
-                seeders=seeders, source="tpb"
+                seeders=seeders, source="tpb", info_url=info_url
             ))
         return results
 
@@ -415,6 +424,109 @@ class TGxIndexer(BaseIndexer):
                 title=title, magnet=magnet, size_bytes=size_bytes,
                 seeders=seeders, source="tgx"
             ))
+
+
+
+# ── Detail page enrichment ────────────────────────────────────────────
+# Language patterns for detail page parsing
+_DETAIL_LANG_CODES = {
+    'english': 'en', 'eng': 'en',
+    'russian': 'ru', 'russkiy': 'ru', 'russkij': 'ru',
+    'french': 'fr', 'français': 'fr', 'francais': 'fr',
+    'german': 'de', 'deutsch': 'de',
+    'spanish': 'es', 'español': 'es', 'espanol': 'es',
+    'italian': 'it', 'italiano': 'it',
+    'portuguese': 'pt', 'português': 'pt', 'portugues': 'pt',
+    'japanese': 'ja', '日本語': 'ja',
+    'chinese': 'zh', '中文': 'zh',
+    'korean': 'ko', '한국어': 'ko',
+    'arabic': 'ar', 'العربية': 'ar',
+    'hindi': 'hi', 'हिन्दी': 'hi',
+    'dutch': 'nl', 'nederlands': 'nl',
+    'polish': 'pl', 'polski': 'pl',
+    'swedish': 'sv', 'svenska': 'sv',
+    'danish': 'da', 'dansk': 'da',
+    'norwegian': 'no', 'norsk': 'no',
+    'finnish': 'fi', 'suomi': 'fi',
+    'czech': 'cs', 'čeština': 'cs',
+    'hungarian': 'hu', 'magyar': 'hu',
+    'romanian': 'ro', 'română': 'ro',
+    'ukrainian': 'uk', 'українська': 'uk',
+    'greek': 'el', 'ελληνικά': 'el',
+    'turkish': 'tr', 'türkçe': 'tr',
+    'thai': 'th', 'ไทย': 'th',
+    'vietnamese': 'vi', 'tiếng việt': 'vi',
+    'hebrew': 'he', 'עברית': 'he',
+}
+
+def _enrich_from_detail(result: TorrentResult) -> dict:
+    '''Fetch detail page and extract metadata not found in title.
+    
+    Returns dict with optional keys: languages, subs, quality_override.
+    Returns empty dict on any error or if no info_url.
+    '''
+    if not result.info_url:
+        return {}
+
+    try:
+        req = urllib.request.Request(result.info_url, headers={
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+        })
+        resp = urllib.request.urlopen(req, timeout=10)
+        html = resp.read().decode('utf-8', errors='replace')
+    except Exception:
+        return {}
+
+    enriched = {}
+    page_lower = html.lower()
+
+    # Extract languages from page text
+    detected_langs = set()
+    for name, code in _DETAIL_LANG_CODES.items():
+        if name in page_lower:
+            detected_langs.add(code)
+    # Also look for ISO codes in common patterns
+    for iso in ('en', 'ru', 'fr', 'de', 'es', 'it', 'pt', 'ja', 'zh', 'ko'):
+        if re.search(r'\blang(?:uage)?[=:;\s]+' + iso + r'\b', page_lower):
+            detected_langs.add(iso)
+        if re.search(r'\b' + iso + r'\s+(?:lang|audio|sub)', page_lower):
+            detected_langs.add(iso)
+
+    if detected_langs:
+        enriched['languages'] = list(detected_langs)
+
+    # Extract subtitle info
+    has_subs = False
+    for pat in ['subtitle', 'subtitles', 'subs', 'sub', 'closed captions']:
+        if pat in page_lower:
+            # Make sure it's not "no subtitles" or similar negative
+            neg = re.search(r'no\s+' + pat, page_lower)
+            if not neg:
+                has_subs = True
+                break
+    
+    # Extract subtitle languages
+    if has_subs:
+        sub_langs = set()
+        for name, code in _DETAIL_LANG_CODES.items():
+            # Match patterns like "subtitles: English", "sub: english"
+            if re.search(r'sub(?:title)?s?[=:;\s]+' + name, page_lower):
+                sub_langs.add(code)
+            # Match patterns like "English subtitles"
+            if re.search(name + r'\s+sub(?:title)?s?', page_lower):
+                sub_langs.add(code)
+        # Common patterns: "Subtitles: English", "Sub: en", etc.
+        for iso in ('en', 'ru', 'fr', 'de', 'es', 'it', 'pt'):
+            if re.search(r'sub(?:title)?[=:;\s]+' + iso, page_lower):
+                sub_langs.add(iso)
+            if iso + r'\s+sub' in page_lower:
+                sub_langs.add(iso)
+        if sub_langs:
+            enriched['subs'] = list(sub_langs)
+        elif has_subs:
+            enriched['subs'] = ['en']  # unknown subs assumed English
+
+    return enriched
 
 
 # Registry of available indexers

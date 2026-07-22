@@ -3,7 +3,7 @@
 
 import sys
 from dataclasses import asdict
-from sator.indexer import search_all
+from sator.indexer import search_all, _enrich_from_detail
 from sator.filter import filter_result_json
 from sator.qb_client import _qb_add_simple
 from sator.size import bytes_to_human
@@ -180,11 +180,44 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
     # Process and filter results
     all_filtered = 0
     best_src = None
+    # Cache for detail page enrichment (by info_url)
+    _enrich_cache = {}
+    
+    def _try_enrich(r, d):
+        '''Fetch detail page once per URL, inject subs/languages into title.'''
+        if not r.info_url:
+            return d
+        # Check cache
+        if r.info_url not in _enrich_cache:
+            _enrich_cache[r.info_url] = _enrich_from_detail(r)
+        enriched = _enrich_cache[r.info_url]
+        if not enriched:
+            return d
+        d2 = dict(d)
+        if enriched.get('languages') and not d2.get('languages'):
+            d2['languages'] = enriched['languages']
+        if enriched.get('subs'):
+            for sc in enriched['subs']:
+                d2['title'] = d2.get('title', '') + f' sub.{sc}'
+                d2['title'] = d2.get('title', '') + f' {sc}.sub'
+        return d2
+    
     for r in results:
         d = asdict(r)
         d['quality'] = asdict(r.quality)
         d['languages'] = r.languages
+        
+        # First filter pass
         filtered = filter_result_json(d, filters)
+        
+        # If filtered but has detail URL, try enrichment and re-filter
+        if not filtered and r.info_url:
+            d2 = _try_enrich(r, d)
+            if d2 is not d:  # enrichment added something
+                filtered = filter_result_json(d2, filters)
+                if filtered:
+                    d = d2  # use enriched version
+        
         if not filtered:
             all_filtered += 1
             # Track per-tracker filtered count
