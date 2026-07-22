@@ -44,9 +44,12 @@ class QBClient:
                 return json.loads(body)
             return {}
         except urllib.error.HTTPError as e:
-            if e.code == 403 and self.config.username:
+            if e.code == 403 and self.config.username and not getattr(self, '_auth_attempted', False):
+                self._auth_attempted = True
                 self._auth()
-                return self._api_call(method, endpoint, data)
+                result = self._api_call(method, endpoint, data)
+                self._auth_attempted = False
+                return result
             return {"error": str(e)}
         except Exception as e:
             return {"error": str(e)}
@@ -54,7 +57,9 @@ class QBClient:
     def _auth(self):
         """Authenticate with qBittorrent."""
         data = {'username': self.config.username, 'password': self.config.password}
-        self._api_call('POST', 'auth/login', data)
+        result = self._api_call('POST', 'auth/login', data)
+        if result and 'error' not in result:
+            self._auth_attempted = False
 
     def add_torrent(self, magnet: str, category: str = "", tags: str = "",
                     ratio_limit: float = -1, seed_time: int = -1) -> dict:

@@ -2,12 +2,10 @@
 """Filter torrent results against user criteria."""
 
 from dataclasses import asdict
-from dataclasses import asdict
 from typing import Optional
 from sator.quality import parse_quality
 from sator.language import parse_languages
-from sator.iso_langs import iso_code, iso_name
-from sator.size import parse_size
+from sator.iso_langs import iso_name
 
 def filter_result_json(result: dict, filters: dict) -> Optional[dict]:
     """Filter a torrent result dict against filter criteria.
@@ -60,6 +58,8 @@ def filter_result_json(result: dict, filters: dict) -> Optional[dict]:
             sn = iso_name(sc)
             if sn:
                 has_subs = has_subs or f'sub.{sn.lower()}' in title.lower() or f'{sn.lower()}.sub' in title.lower()
+        if not has_subs:
+            return None
 
     # Enrich with parsed info
     result['_quality'] = asdict(quality)

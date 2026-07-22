@@ -75,7 +75,6 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
                            show_tracker_titles: bool = False,
                            query_num: int = 1,
                            total_queries: int = 1,
-                           start_time: float = 0.0,
                            trackers: list = None) -> dict:
     """Internal: search all trackers, filter, optionally add to qBittorrent.
     Returns dict with {found, added, total_size, magnets, display_lines, found_any,
@@ -133,6 +132,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
     
     # Process and filter results
     all_filtered = 0
+    best_src = None
     for r in results:
         d = asdict(r)
         d['quality'] = asdict(r.quality)
@@ -147,6 +147,10 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         
         out['found'] += 1
         out['found_any'] = True
+        # Capture best source on first match
+        if best_src is None and r.source:
+            best_src = r.source
+            out['best_indices'].append(r.source)
         out['total_size'] += filtered.get('size_bytes', 0)
         magnet = filtered.get('magnet', '')
         if magnet:
@@ -181,16 +185,8 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
     # Determine best result (top by seeders among filtered)
     best_src = None
     if out['found'] > 0:
-        # Find source with most seeders in the first result
-        for r in results:
-            d = asdict(r)
-            d['quality'] = asdict(r.quality)
-            d['languages'] = r.languages
-            filtered = filter_result_json(d, filters)
-            if filtered:
-                out['best_indices'].append(r.source if r.source else '')
-                best_src = r.source
-                break
+        # best_src was captured during the first filter pass (see loop below)
+        pass
     
     # Update status chars after filtering
     for i, name in enumerate(TRACKER_ORDER):

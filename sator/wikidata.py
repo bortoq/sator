@@ -13,7 +13,7 @@ import urllib.request
 
 # Wikidata Q-code → ISO 639-1 mapping
 WIKIDATA_ISO = {
-    'Q1860': 'en', 'Q188': 'de', 'Q12107': 'ru', 'Q150': 'fr', 'Q652': 'it',
+    'Q1860': 'en', 'Q188': 'de', 'Q12107': 'br',  # Breton 'Q150': 'fr', 'Q652': 'it',
     'Q1321': 'es', 'Q5146': 'pt', 'Q7411': 'nl', 'Q809': 'pl', 'Q9027': 'sv',
     'Q9035': 'da', 'Q1412': 'fi', 'Q9056': 'cs', 'Q9067': 'hu', 'Q7913': 'ro',
     'Q8798': 'uk', 'Q9129': 'el', 'Q256': 'tr', 'Q9217': 'th', 'Q9199': 'vi',

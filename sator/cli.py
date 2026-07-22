@@ -18,6 +18,7 @@ from sator.filter import filter_result_json
 from sator.indexer import search_all, TorrentResult, INDEXERS
 from sator.qb_client import _qb_add_simple
 from sator.process import _process_query_internal, TRACKER_LABELS
+import time
 
 def cmd_parse_languages(args: List[str]):
     """Usage: parse-languages <title>"""
@@ -552,7 +553,7 @@ qBittorrent:
     total_size = 0
     added_count = 0
     all_torrents = []
-    start_time = __import__('time').time()
+    start_time = time.time()
     
     for i, q in enumerate(queries):
         num = i + 1
@@ -601,7 +602,7 @@ qBittorrent:
         all_torrents.extend(result.get('torrents', []))
     
     # ── Report ─────────────────────────────────────────────────────────────
-    duration = int(__import__('time').time() - start_time)
+    duration = int(time.time() - start_time)
     print(f'Report:', file=sys.stderr)
     print(f'  Found:        {found_count}', file=sys.stderr)
     print(f'  Not found:    {len(not_found_items)}', file=sys.stderr)
