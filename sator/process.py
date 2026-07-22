@@ -223,9 +223,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             'magnet': magnet if magnet else '',
         })
         
-        if qb_add and magnet:
-            _qb_add_simple(magnet, qb_url, category, tags)
-            out['added'] += 1
+        # qb_add is handled below (best-mode or fallback)
     
     out['filtered_count'] = all_filtered
     
@@ -253,14 +251,21 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         if best.get('magnet'):
             out['display_lines'].append(f"    {best['magnet']}")
         
-        # Re-add to qB if needed (only best one)
+        # Add best torrent to qB
         out['added'] = 0
         if qb_add and best.get('magnet'):
             _qb_add_simple(best['magnet'], qb_url, category, tags)
             out['added'] = 1
     
-    # Determine best result (top by seeders among filtered)
-    best_src = None
+    # ── NOT best-mode: add all filtered to qB ──
+    if not best_mode and qb_add:
+        for t in out['torrents']:
+            if t.get('magnet'):
+                _qb_add_simple(t['magnet'], qb_url, category, tags)
+                out['added'] += 1
+    
+    # best_src is captured during the filter loop (line 198)
+    # It remains set for the status chars below
     
     # Update status chars after filtering
     for i, name in enumerate(TRACKER_ORDER):
