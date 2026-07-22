@@ -5,6 +5,7 @@ from dataclasses import asdict
 from typing import Optional
 from sator.quality import parse_quality
 from sator.language import parse_languages
+import re
 from sator.iso_langs import iso_name
 from sator.exclude import is_excluded
 
@@ -57,13 +58,18 @@ def filter_result_json(result: dict, filters: dict) -> Optional[dict]:
     # Subtitle filters
     subs_filters = filters.get('subs', [])
     if subs_filters:
-        has_subs = any(f'sub.{sc}' in title.lower() or f'{sc}.sub' in title.lower()
+        title_lower = title.lower()
+        has_subs = any(f'sub.{sc}' in title_lower or f'{sc}.sub' in title_lower
                        for sc in subs_filters)
-        # Also check full language name
+        # Also check full language name (dotted + natural language)
         for sc in subs_filters:
             sn = iso_name(sc)
             if sn:
-                has_subs = has_subs or f'sub.{sn.lower()}' in title.lower() or f'{sn.lower()}.sub' in title.lower()
+                snl = sn.lower()
+                has_subs = has_subs or f'sub.{snl}' in title_lower or f'{snl}.sub' in title_lower
+                # Natural language: "English Subs", "English Subtitles", "Subs English"
+                has_subs = has_subs or bool(re.search(r'\b' + snl + r'\s+subs?\b', title_lower))
+                has_subs = has_subs or bool(re.search(r'\bsubs?\s+' + snl + r'\b', title_lower))
         if not has_subs:
             return None
 
