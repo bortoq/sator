@@ -2,3 +2,9 @@
 __pycache__
 .cache
 *.swp
+.pytest_cache
+*.egg-info
+dist/
+build/
+.venv/
+*.egg

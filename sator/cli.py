@@ -8,17 +8,17 @@ import re
 import sys
 from typing import List
 from dataclasses import asdict
-from sator.iso_langs import iso_lookup, iso_name, iso_code
+from sator.iso_langs import iso_lookup, iso_name
 from sator.language import parse_languages
 from sator.quality import parse_quality
-from sator.title import parse_title, ParsedTitle
+from sator.title import parse_title
 from sator.size import parse_size, bytes_to_human
 from sator.wikidata import get_wikidata_original_lang
 from sator.filter import filter_result_json
-from sator.indexer import search_all, TorrentResult, INDEXERS
+from sator.indexer import search_all, INDEXERS
 from sator.qb_client import _qb_add_simple
-from sator.process import _process_query_internal, TRACKER_LABELS
 import time
+from sator.process import _process_query_internal, TRACKER_LABELS
 
 def cmd_parse_languages(args: List[str]):
     """Usage: parse-languages <title>"""
@@ -273,11 +273,17 @@ def cmd_process_query(args: List[str]):
         'lang': parsed.lang,
         'subs': parsed.subs,
     }
+    if parsed.exclude:
+        filters['excludes'] = [x.strip() for x in parsed.exclude.split(',') if x.strip()]
+    if parsed.tmdb_key:
+        filters['tmdb_key'] = parsed.tmdb_key
+    filters['tmdb_enrich'] = parsed.enrich
     
     out = _process_query_internal(query, filters, parsed.qb_add, parsed.qb_url,
                                   parsed.category, parsed.tags, parsed.output,
                                   verbose=parsed.verbose,
-                                  show_tracker_titles=parsed.tracker_titles)
+                                  show_tracker_titles=parsed.tracker_titles,
+                                  best_mode=not parsed.more)
     print(json.dumps(out))
 
 
@@ -446,6 +452,11 @@ Output:
 Progress:
   -v, --verbose       Show per-tracker results during search
   -tt, --tracker-titles  Show tracker names before first search
+
+TMDB (optional):
+  --enrich                     Enable TMDB enrichment (default: on)
+  --no-enrich                  Disable TMDB enrichment
+  --tmdb-key KEY               TMDB API key (overrides config)
 
 qBittorrent:
   --category CAT      Category for added torrents
@@ -673,7 +684,8 @@ Commands:
   qb-add <magnet>            Add magnet to qBittorrent [--category] [--tags]
   search <tracker|all> <q>   Search torrents on tracker
   search-all <query>         Search all trackers, return combined results
-  process-query <query>      Search all + filter [--rl] [--rb] [--zl] [--zb] [--lang] [--subs]
+  process-query <query>      Search all + filter [--rl] [--rb] [--zl] [--zb]
+                              [--lang] [--subs] [-m] [-e] [--enrich] [--tmdb-key]
   run <args>                 Full sator workflow (replaces bash script)
   wikilang <query>           Get original language via Wikidata
   size <val>                 Convert size (human↔bytes)

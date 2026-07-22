@@ -7,8 +7,8 @@ Best-effort: if no API key is available, all functions are no-ops.
 import json
 import os
 import re
-import time
-from typing import Optional
+import urllib.parse
+import urllib.request
 
 # Default config path
 CONFIG_PATH = os.path.expanduser('~/.config/sator/config')
@@ -49,13 +49,11 @@ def enrich_query(query: str, api_key: str = '') -> str:
         return _cache[query]
     
     try:
-        import urllib.request
-        import urllib.parse
         url = f'https://api.themoviedb.org/3/search/multi?api_key={key}&query={urllib.parse.quote(query)}'
         req = urllib.request.Request(url, headers={'User-Agent': 'sator/0.3'})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
-        
+
         if data.get('results'):
             result = data['results'][0]
             year = result.get('release_date') or result.get('first_air_date', '')
@@ -65,6 +63,6 @@ def enrich_query(query: str, api_key: str = '') -> str:
                 return enriched
     except Exception:
         pass
-    
+
     _cache[query] = query
     return query

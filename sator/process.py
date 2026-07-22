@@ -2,10 +2,8 @@
 """Internal process-query orchestration."""
 
 import sys
-import time
 from dataclasses import asdict
-from typing import Optional
-from sator.indexer import search_all, TorrentResult
+from sator.indexer import search_all
 from sator.filter import filter_result_json
 from sator.qb_client import _qb_add_simple
 from sator.size import bytes_to_human
@@ -68,7 +66,6 @@ def _make_progress_cb(query_num: int, total_queries: int, query: str,
                        verbose: bool, status_chars: list,
                        tracker_results: dict, tracker_errors: dict):
     """Create a progress callback for search_all()."""
-    tracker_count = len(TRACKER_ORDER)
     
     def _print_compact():
         """Print/refresh one-line compact progress."""
