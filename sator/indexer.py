@@ -222,7 +222,7 @@ def search_all(query: str, trackers: List[str] = None,
       - 'error': failed, error_msg=reason
     """
     if trackers is None:
-        trackers = list(INDEXERS.keys())
+        trackers = ['nyaa', 'tpb']
     results = []
     for name in trackers:
         indexer = INDEXERS.get(name)

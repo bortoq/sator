@@ -1,62 +1,69 @@
-# TODO — формат `-o` / `-a file`
+# TODO — умолчания для ключей
 
-## Формат строки (3 строки на торрент)
+## Встроенные умолчания (харкод в `cli.py`)
 
-```
-# [<source>] <title>
-# Size: <size_h> | <quality_label> | seeders: <seeders>
-magnet:?xt=urn:btih:...
-```
+Применяются, если ключ не указан в аргументах CLI.
 
-Разделитель между торрентами — опциональная пустая строка.
+| Ключ | Умолчание | Пояснение |
+|------|-----------|-----------|
+| `-rb` | `480` | Нижняя граница разрешения (не ниже 480p) |
+| `-rl` | `1080` | Верхняя граница разрешения (не выше 1080p) |
+| `-zb` | `200m` | Нижняя граница размера (не меньше 200 MiB) |
+| `-zl` | `8g` | Верхняя граница размера (не больше 8 GiB) |
+| `-t` | `en` | Английские субтитры |
+| `-l` | `original` | Язык оригинала (автоопределение через Wikidata) |
+| трекеры | `nyaa, tpb` | Только рабочие трекеры |
 
-## Пример
+**Логика**: если ключ не указан — подставляется умолчание. Если указан явно (даже `""`?) — перекрывает умолчание. Для `-l` и `-t` ключ без аргумента трактуется как `original`.
 
-```
-# [tpb] Seven.Samurai.1954.CRITERION.1080p.BluRay.x264.anoXmous
-# Size: 0 B | BluRay 1080p x264 | seeders: 108
-magnet:?xt=urn:btih:F7F2B473B8B16DDD5004CC9BF78249E252CEBBD1&...
+## Конфиг-файл (опционально, 2-я итерация)
 
-# [nyaa] [reddeimon] Seven Samurai 1954 [1080p Bluray Remux x264 PCM].mkv
-# Size: 40.8 GiB | BluRay Remux 1080p x264 PCM | seeders: 0
-magnet:?xt=urn:btih:455df592722424400aaca8b5cc7cf57976844603&...
-```
+`~/.config/sator/config` или `~/.satorrc` — пересекает встроенные умолчания.
 
-## Парсинг `-a file`
-
-```python
-def _parse_magnet_file(path: str) -> List[str]:
-    magnets = []
-    with open(path) as f:
-        for line in f:
-            s = line.strip()
-            if not s or s.startswith('#'):
-                continue
-            if s.startswith('magnet:'):
-                magnets.append(s)
-            else:
-                raise ValueError(f"Unexpected: {s[:80]!r}")
-    return magnets
+Формат INI:
+```ini
+[sator]
+rb = 480
+rl = 1080
+zb = 200m
+zl = 8g
+t = en
+l = original
+trackers = nyaa, tpb
 ```
 
-## Изменения в данных
+Приоритет: **CLI-аргументы** > **конфиг-файл** > **встроенные умолчания**.
 
-`_process_query_internal()` добавляет `out['torrents']`:
+## План реализации (1-я итерация — только харкод)
 
-```python
-{
-    'title': str,          # название
-    'size_h': str,         # человекочитаемый размер
-    'source': str,         # трекер (nyaa/tpb/...)
-    'seeders': int,        # сиды
-    'quality_label': str,  # качество
-    'magnet': str,         # magnet-ссылка
-}
-```
+1. В `cli.py` добавить словарь/конфиг встроенных умолчаний: `DEFAULTS = {...}`
+2. В `cmd_run()` / `main()` после парсинга аргументов: для каждого ключа, который не был явно указан — применить значение из `DEFAULTS`
+3. Для `trackers` — если не указан ключ `--trackers` / `-T`, использовать `['nyaa', 'tpb']`
 
-## Изменения в `cmd_run`
+### Ключи, НЕ имеющие умолчаний
 
-1. `all_magnets` → `all_torrents: List[dict]` (из `out['torrents']`)
-2. stdout — только magnet URI (без изменений)
-3. `-o FILE` — форматированный вывод по спецификации выше
-4. `-a file` — использует `_parse_magnet_file()`
+- `-s`, `-f` — сам запрос (обязателен в search-режиме)
+- `-a` — режим автодобавления
+- `-o` — файл вывода
+- `-v`, `-tt` — индикация (по умолч. тихий режим)
+
+## Контракт
+
+### `def apply_defaults(args: Namespace) -> Namespace`
+- **Предусловие**: `args` — результат `argparse`
+- **Постусловие**: все неуказанные ключи заполнены из `DEFAULTS`
+- **Инвариант**: явно указанные пользователем значения НЕ перезаписываются
+
+### Как отличить «не указано» от «указано явно»
+
+Варианты:
+1. `argparse.SUPPRESS` / `None` — default в `add_argument()` не ставить, а после парсинга проверять `is None`
+2. Отдельный `set` для зафиксированных ключей (сложнее)
+
+**Решение**: вариант 1 — все умолчания `default=None`, после парсинга — `apply_defaults()`.
+
+## Изменяемые файлы
+
+- `sator/cli.py` — `DEFAULTS`, `apply_defaults()`, изменения в `cmd_run()`/`main()`
+- `sator/process.py` — проверить, что трекеры по умолчанию корректно пробрасываются
+- Тесты (след. коммит)

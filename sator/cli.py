@@ -179,8 +179,8 @@ def cmd_filter(args: List[str]):
     parser.add_argument('--rb', type=int, default=None)
     parser.add_argument('--zl', type=int, default=None)
     parser.add_argument('--zb', type=int, default=None)
-    parser.add_argument('--lang', action='append', default=[])
-    parser.add_argument('--subs', action='append', default=[])
+    parser.add_argument('--lang', action='append', default=None)
+    parser.add_argument('--subs', action='append', default=None)
     try:
         parsed = parser.parse_args(args)
     except SystemExit as e:
@@ -308,6 +308,46 @@ def _parse_magnet_file(path: str) -> list:
                 raise ValueError(f"Unexpected line in magnet file: {s[:80]!r}")
     return magnets
 
+
+# ── Built-in defaults ──────────────────────────────────────────────
+DEFAULTS = {
+    'rb': '480',        # resolution lower bound (not below 480p)
+    'rl': '1080',       # resolution upper bound (not above 1080p)
+    'zb': '200m',       # size lower bound (not smaller than 200 MiB)
+    'zl': '8g',         # size upper bound (not larger than 8 GiB)
+    'lang': ['__original__'],  # audio language: original via Wikidata
+    'subs': ['en'],     # subtitle language: English
+    'trackers': ['nyaa', 'tpb'],  # active trackers only
+}
+
+def apply_defaults(args: argparse.Namespace) -> argparse.Namespace:
+    """Fill in built-in defaults for args that were not explicitly provided.
+    CLI args always take priority over defaults."""
+    # Resolution bounds: None → default string
+    if args.rl is None:
+        args.rl = DEFAULTS['rl']
+    if args.rb is None:
+        args.rb = DEFAULTS['rb']
+    if args.zl is None:
+        args.zl = DEFAULTS['zl']
+    if args.zb is None:
+        args.zb = DEFAULTS['zb']
+    
+    # Language: None (not provided) → ['__original__']
+    if args.lang is None:
+        args.lang = list(DEFAULTS['lang'])
+    
+    # Subtitles: None (not provided) → ['en']
+    if args.subs is None:
+        args.subs = list(DEFAULTS['subs'])
+    
+    # Trackers: None (not provided) → ['nyaa', 'tpb']
+    if getattr(args, 'trackers', None) is None:
+        args.trackers = list(DEFAULTS['trackers'])
+    
+    return args
+
+
 def cmd_run(args: List[str]):
     """Main entry point: replaces the bash script entirely.
     Usage: run <sator-args>  (same CLI as the original sator bash script)
@@ -340,8 +380,12 @@ def cmd_run(args: List[str]):
     parser.add_argument('-zb', type=str, default=None)
     
     # Language filters (repeatable)
-    parser.add_argument('-l', '--lang', nargs='?', const='__original__', default=[], action='append')
-    parser.add_argument('-t', '--subs', action='append', default=[])
+    parser.add_argument('-l', '--lang', nargs='?', const='__original__', default=None, action='append')
+    parser.add_argument('-t', '--subs', action='append', default=None)
+    
+    # Tracker selection
+    parser.add_argument('-T', '--trackers', nargs='+', default=None,
+                       help='Trackers to search (space-separated, e.g. nyaa tpb)')
     
     # qBittorrent options
     parser.add_argument('--category', default='')
@@ -363,6 +407,9 @@ def cmd_run(args: List[str]):
         parsed = parser.parse_args(args)
     except SystemExit as e:
         sys.exit(e.code)
+    
+    # Apply built-in defaults to unset args
+    parsed = apply_defaults(parsed)
     
     if parsed.help:
         print(__doc__)
@@ -552,7 +599,8 @@ qBittorrent:
                                         parsed.category, parsed.tags,
                                         verbose=parsed.verbose,
                                         show_tracker_titles=parsed.tracker_titles,
-                                        query_num=num, total_queries=total)
+                                        query_num=num, total_queries=total,
+                                        trackers=parsed.trackers)
         
         if not result.get('found_any'):
             if not parsed.verbose:

@@ -75,7 +75,8 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
                            show_tracker_titles: bool = False,
                            query_num: int = 1,
                            total_queries: int = 1,
-                           start_time: float = 0.0) -> dict:
+                           start_time: float = 0.0,
+                           trackers: list = None) -> dict:
     """Internal: search all trackers, filter, optionally add to qBittorrent.
     Returns dict with {found, added, total_size, magnets, display_lines, found_any,
                         filtered_count, best_indices}."""
@@ -98,7 +99,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             print(TRACKER_LABELS.get(name, name), file=sys.stderr)
     
     # Search with progress callback
-    results = search_all(query, progress_cb=progress_cb)
+    results = search_all(query, trackers=trackers, progress_cb=progress_cb)
     
     out = {
         'found': 0,
