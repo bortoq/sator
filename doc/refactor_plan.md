@@ -28,10 +28,13 @@ work/sator/
 │   └── wikidata.py                 # get_wikidata_original_lang
 ├── tests/                          # pytest test suite
 │   ├── test_cli.py
+│   ├── test_enrich.py
 │   ├── test_exclude.py
 │   ├── test_filter_blacklist.py
 │   ├── test_format.py
-│   └── test_scoring.py
+│   ├── test_new_indexers.py
+│   ├── test_scoring.py
+│   └── test_wikidata.py
 ├── doc/
 │   ├── refactor_plan.md            # This file
 │   └── audit.md                    # v0.2 audit (superseded by v0.3)
@@ -42,6 +45,6 @@ work/sator/
 
 ### Verification
 - [x] `python3 -m sator run -s "test"` works
-- [x] `python3 -m pytest tests/` — 32/32 pass
+- [x] `python3 -m pytest tests/` — 67/67 pass
 - [x] All CLI flags work (v0.2 + v0.3)
 - [x] No circular imports

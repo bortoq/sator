@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tracker indexers: Nyaa, TPB, LimeTorrents."""
+"""Tracker indexers: Nyaa, TPB, LimeTorrents, YTS, SolidTorrents, EZTV, TGx."""
 
 import html as htmlmod
 import json
@@ -270,13 +270,13 @@ class YTSIndexer(BaseIndexer):
                     num = float(sm.group(1))
                     unit = sm.group(2).upper()
                     if unit == 'TB':
-                        size_bytes = int(num * 10**12)
+                        size_bytes = int(num * 1024**4)
                     elif unit == 'GB':
-                        size_bytes = int(num * 10**9)
+                        size_bytes = int(num * 1024**3)
                     elif unit == 'MB':
-                        size_bytes = int(num * 10**6)
+                        size_bytes = int(num * 1024**2)
                     elif unit == 'KB':
-                        size_bytes = int(num * 10**3)
+                        size_bytes = int(num * 1024)
                 # Compose quality label for scoring
                 quality_label = f"{quality} {ttype.title()}" if ttype else quality
                 title_tag = f"{display_title} {quality_label}"
@@ -358,11 +358,11 @@ class EZTVIndexer(BaseIndexer):
                 num = float(sm.group(1))
                 unit = sm.group(2).upper()
                 if unit == 'GB':
-                    size_bytes = int(num * 10**9)
+                    size_bytes = int(num * 1024**3)
                 elif unit == 'MB':
-                    size_bytes = int(num * 10**6)
+                    size_bytes = int(num * 1024**2)
                 elif unit == 'KB':
-                    size_bytes = int(num * 10**3)
+                    size_bytes = int(num * 1024)
             # Seeders
             sdm = re.search(r'<td[^>]*class[^>]*>\s*(\d+)\s*</td>\s*<td[^>]*class[^>]*>\s*\d+\s*</td>\s*<td[^>]*class[^>]*>', row, re.DOTALL)
             seeders = int(sdm.group(1)) if sdm else 0
@@ -410,13 +410,13 @@ class TGxIndexer(BaseIndexer):
                 num = float(sm.group(1))
                 unit = sm.group(2).upper()
                 if unit == 'TB':
-                    size_bytes = int(num * 10**12)
+                    size_bytes = int(num * 1024**4)
                 elif unit == 'GB':
-                    size_bytes = int(num * 10**9)
+                    size_bytes = int(num * 1024**3)
                 elif unit == 'MB':
-                    size_bytes = int(num * 10**6)
+                    size_bytes = int(num * 1024**2)
                 elif unit == 'KB':
-                    size_bytes = int(num * 10**3)
+                    size_bytes = int(num * 1024)
             # Seeders
             sdm = re.search(r'<td[^>]*>\s*(\d+)\s*</td>\s*<td[^>]*>\s*\d+\s*</td>', row, re.DOTALL)
             seeders = int(sdm.group(1)) if sdm else 0

@@ -71,6 +71,11 @@ def filter_result_json(result: dict, filters: dict) -> Optional[dict]:
                 has_subs = has_subs or bool(re.search(r'\b' + snl + r'\s+subs?\b', title_lower))
                 has_subs = has_subs or bool(re.search(r'\bsubs?\s+' + snl + r'\b', title_lower))
         if not has_subs:
+            # Check enriched subs from detail page scraping
+            enriched_subs = result.get('_enriched_subs', [])
+            if enriched_subs:
+                has_subs = any(sc in enriched_subs for sc in subs_filters)
+        if not has_subs:
             return None
 
     # Enrich with parsed info

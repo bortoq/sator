@@ -197,9 +197,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         if enriched.get('languages') and not d2.get('languages'):
             d2['languages'] = enriched['languages']
         if enriched.get('subs'):
-            for sc in enriched['subs']:
-                d2['title'] = d2.get('title', '') + f' sub.{sc}'
-                d2['title'] = d2.get('title', '') + f' {sc}.sub'
+            d2['_enriched_subs'] = enriched['subs']
         return d2
     
     for r in results:
