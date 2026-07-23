@@ -676,29 +676,26 @@ qBittorrent:
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help', 'help'):
-        print(__doc__)
-        print("""
-Commands:
-  parse-title <title>        Parse torrent title (name, year, quality, languages)
-  parse-languages <title>    Detect languages in torrent title
-  parse-quality <title>      Detect quality (resolution, source, codec, HDR)
-  iso-lookup <code|name>     Look up ISO 639 language info
-  qb-add <magnet>            Add magnet to qBittorrent [--category] [--tags]
-  search <tracker|all> <q>   Search torrents on tracker
-  search-all <query>         Search all trackers, return combined results
-  process-query <query>      Search all + filter [--rl] [--rb] [--zl] [--zb]
-                              [--lang] [--subs] [-m] [-e] [--enrich] [--tmdb-key]
-  run <args>                 Full sator workflow (replaces bash script)
-  wikilang <query>           Get original language via Wikidata
-  size <val>                 Convert size (human↔bytes)
-  filter <json>              Filter a result against criteria
-  help                       Show this help
-""")
-        sys.exit(0)
+    # If first arg is a flag or no args, dispatch to run (the full CLI workflow)
+    if len(sys.argv) < 2:
+        cmd_run(['--help'])
+        return
+    
+    if sys.argv[1] in ('-h', '--help'):
+        cmd_run(['--help'])
+        return
+    
+    if sys.argv[1] == 'help':
+        cmd_run(['--help'])
+        return
 
     command = sys.argv[1]
     cmd_args = sys.argv[2:]
+
+    # If it looks like a flag (starts with -), dispatch to run
+    if command.startswith('-'):
+        cmd_run(sys.argv[1:])
+        return
 
     commands = {
         'parse-languages': cmd_parse_languages,
@@ -718,8 +715,6 @@ Commands:
     if command in commands:
         commands[command](cmd_args)
     else:
-        print(json.dumps({"error": f"Unknown command: {command}. Use 'help' for usage."}),
+        print(json.dumps({"error": f"Unknown command: {command}. Use 'run --help' for usage."}),
               file=sys.stderr)
         sys.exit(1)
-
-
