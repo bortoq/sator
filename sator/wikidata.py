@@ -37,7 +37,7 @@ WIKIDATA_ISO = {
 
 # Noise words to strip before Wikidata lookup
 _NOISE_WORDS = (
-    'complete', 'series', 'season', 's\d+', 'episode', 'e\d+',
+    'complete', 'series', 'season', r's\d+', 'episode', r'e\d+',
     '1080p', '720p', '2160p', '480p', '4k', 'uhd',
     'bluray', 'blu-ray', 'bdrip', 'bd-rip', 'brrip',
     'webdl', 'web-dl', 'webrip', 'web-rip', 'hdtv', 'hdtvrip',

@@ -424,7 +424,7 @@ class TGxIndexer(BaseIndexer):
                 title=title, magnet=magnet, size_bytes=size_bytes,
                 seeders=seeders, source="tgx"
             ))
-
+        return results
 
 
 # ── Detail page enrichment ────────────────────────────────────────────
@@ -519,7 +519,7 @@ def _enrich_from_detail(result: TorrentResult) -> dict:
         for iso in ('en', 'ru', 'fr', 'de', 'es', 'it', 'pt'):
             if re.search(r'sub(?:title)?[=:;\s]+' + iso, page_lower):
                 sub_langs.add(iso)
-            if iso + r'\s+sub' in page_lower:
+            if re.search(iso + r'\s+sub', page_lower):
                 sub_langs.add(iso)
         if sub_langs:
             enriched['subs'] = list(sub_langs)
