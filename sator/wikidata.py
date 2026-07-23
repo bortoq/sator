@@ -76,54 +76,69 @@ def get_wikidata_original_lang(query: str, cache_file: str = "") -> str:
             pass
 
     try:
-        # 1. Wikipedia search
-        params = urllib.parse.urlencode({
-            'action': 'query', 'list': 'search',
-            'srsearch': query + ' film', 'format': 'json', 'srlimit': 1
-        })
-        req = urllib.request.Request(
-            f'https://en.wikipedia.org/w/api.php?{params}',
-            headers={'User-Agent': 'sator/0.1'}
-        )
-        resp = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
-        pages = resp.get('query', {}).get('search', [])
+        # 1. Wikipedia search — try multiple queries, iterate results
+        queries_to_try = [
+            query + ' TV series',
+            query + ' film',
+            query,
+        ]
+        pages = []
+        for sq in queries_to_try:
+            params = urllib.parse.urlencode({
+                'action': 'query', 'list': 'search',
+                'srsearch': sq, 'format': 'json', 'srlimit': 3
+            })
+            req = urllib.request.Request(
+                f'https://en.wikipedia.org/w/api.php?{params}',
+                headers={'User-Agent': 'sator/0.1'}
+            )
+            resp = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
+            pages = resp.get('query', {}).get('search', [])
+            if pages:
+                break
         if not pages:
             return ""
-        title = pages[0]['title']
 
-        # 2. Get wikibase ID
-        params = urllib.parse.urlencode({
-            'action': 'query', 'prop': 'pageprops',
-            'titles': title, 'format': 'json'
-        })
-        req = urllib.request.Request(
-            f'https://en.wikipedia.org/w/api.php?{params}',
-            headers={'User-Agent': 'sator/0.1'}
-        )
-        resp = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
-        eid = None
-        for pid, pdata in resp.get('query', {}).get('pages', {}).items():
-            if 'pageprops' in pdata and 'wikibase_item' in pdata['pageprops']:
-                eid = pdata['pageprops']['wikibase_item']
+        # 2. Get wikibase ID — try pages in order until we find valid language info
+        def _get_lang_for_title(wp_title):
+            params = urllib.parse.urlencode({
+                'action': 'query', 'prop': 'pageprops',
+                'titles': wp_title, 'format': 'json'
+            })
+            req = urllib.request.Request(
+                f'https://en.wikipedia.org/w/api.php?{params}',
+                headers={'User-Agent': 'sator/0.1'}
+            )
+            resp = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
+            eid = None
+            for pid, pdata in resp.get('query', {}).get('pages', {}).items():
+                if 'pageprops' in pdata and 'wikibase_item' in pdata['pageprops']:
+                    eid = pdata['pageprops']['wikibase_item']
+                    break
+            if not eid:
+                return ""
+            # 3. Get Wikidata entity
+            req = urllib.request.Request(
+                f'https://www.wikidata.org/wiki/Special:EntityData/{eid}.json',
+                headers={'User-Agent': 'sator/0.1'}
+            )
+            resp = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
+            claims = resp.get('entities', {}).get(eid, {}).get('claims', {})
+            lang_claim = claims.get('P364', []) or claims.get('P407', []) or claims.get('P2439', [])
+            if not lang_claim:
+                return ""
+            lang_q = lang_claim[0].get('mainsnak', {}).get('datavalue', {}).get('value', {}).get('id', '')
+            if not lang_q:
+                return ""
+            return WIKIDATA_ISO.get(lang_q, "")
+
+        iso = ""
+        for p in pages:
+            iso = _get_lang_for_title(p['title'])
+            if iso:
                 break
-        if not eid:
+        if not iso:
             return ""
-
-        # 3. Get Wikidata entity
-        req = urllib.request.Request(
-            f'https://www.wikidata.org/wiki/Special:EntityData/{eid}.json',
-            headers={'User-Agent': 'sator/0.1'}
-        )
-        resp = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
-        claims = resp.get('entities', {}).get(eid, {}).get('claims', {})
-        lang_claim = claims.get('P364', []) or claims.get('P407', []) or claims.get('P2439', [])
-        if not lang_claim:
-            return ""
-        lang_q = lang_claim[0].get('mainsnak', {}).get('datavalue', {}).get('value', {}).get('id', '')
-        if not lang_q:
-            return ""
-
-        iso = WIKIDATA_ISO.get(lang_q, "")
 
         # Cache result
         if iso and cache_file:
