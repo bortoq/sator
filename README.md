@@ -5,7 +5,7 @@ Multi-tracker torrent search and filtering tool with qBittorrent integration.
 ```
 sator -s "Rick and Morty S07" -o results.url
 sator -f queries.txt -a                                          # search + auto-add
-sator -f queries.txt -m                                         # show all results (disable best-mode)
+sator -f queries.txt -v                                         # show all results with details
 sator -a downloads.txt                                           # add magnets from file
 ```
 
@@ -15,7 +15,7 @@ sator -a downloads.txt                                           # add magnets f
 - **Filter pipeline**: resolution bounds, size bounds, language, subtitles, blacklist
 - **Language detection**: title parsing + Wikidata auto-detect (original language)
 - **Detail page enrichment**: scrapes metadata when title lacks language/subtitle info
-- **Best-mode** (`-m`): scores and selects best result per query
+- **Best-mode**: scores and selects best result per query (default). Use `-m` to show all results
 - **Verbose output** (`-v`): shows all results including filtered-out (with reason)
 - **qBittorrent integration** (`-a`): auto-add found torrents
 - **Blacklist**: built-in exclusion of CAM/TS/scrubbed releases
@@ -196,7 +196,7 @@ cd sator
 python3 -m pytest tests/
 ```
 
-67 tests covering: CLI parsing, filter pipeline, blacklist, scoring, magnet parsing, tracker integration (mocked HTTP), detail page enrichment, Wikidata lookup.
+74 tests covering: CLI parsing, filter pipeline, blacklist, scoring, magnet parsing, tracker integration (mocked HTTP), detail page enrichment, Wikidata lookup.
 
 ## License
 

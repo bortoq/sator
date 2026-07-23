@@ -3,7 +3,6 @@
 
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # QUALITY PARSER (from Radarr QualityParser.cs)
@@ -75,7 +74,6 @@ HDR_PATTERNS = [
 REMUX_PATTERN = re.compile(r'(?:[_. \[]|\d{4}p-|\bHybrid-)(?:(BD|UHD)[-_. ]?)?Remux\b|(?:(BD|UHD)[-_. ]?)?Remux[_. ]\d{4}p', re.IGNORECASE)
 THREE_D_PATTERN = re.compile(r'\b3D\b', re.IGNORECASE)
 
-
 @dataclass
 class QualityInfo:
     resolution: int = 0
@@ -86,7 +84,6 @@ class QualityInfo:
     is_remux: bool = False
     is_3d: bool = False
     quality_label: str = "Unknown"
-
 
 def parse_quality(title: str) -> QualityInfo:
     """Parse quality information from a torrent/release title."""

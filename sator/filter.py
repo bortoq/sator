@@ -2,14 +2,13 @@
 """Filter torrent results against user criteria."""
 
 from dataclasses import asdict
-from typing import Optional
 from sator.quality import parse_quality
 from sator.language import parse_languages
 import re
 from sator.iso_langs import iso_name
 from sator.exclude import is_excluded
 
-def filter_result_json(result: dict, filters: dict) -> Optional[dict]:
+def filter_result_json(result: dict, filters: dict) -> [dict]:
     """Filter a torrent result dict against filter criteria.
     Returns the result if it passes, None if filtered out.
     """
@@ -83,7 +82,7 @@ def filter_result_json(result: dict, filters: dict) -> Optional[dict]:
     result['_languages'] = parse_languages(title)
     return result
 
-def _parse_res_filter(val) -> Optional[int]:
+def _parse_res_filter(val) -> [int]:
     """Parse resolution filter value to integer."""
     val = str(val).lower()
     if '2160' in val or '4k' in val:

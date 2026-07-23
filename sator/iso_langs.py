@@ -2,7 +2,7 @@
 """ISO 639 language database and lookup functions."""
 
 import re
-from typing import Optional, Dict
+from typing import Optional
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ISO 639 LANGUAGE DATABASE
@@ -197,7 +197,6 @@ ISO_LANGUAGES = [
 ]
 # fmt: on
 
-
 # Build lookup dicts
 _ISO_BY_1 = {}
 _ISO_BY_3 = {}
@@ -231,12 +230,10 @@ def iso_lookup(key: str) -> Optional[dict]:
         }
     return None
 
-
 def iso_name(code: str) -> str:
     """Get English name for ISO 639-1 code."""
     entry = _ISO_BY_1.get(code.lower())
     return entry[4] if entry else code
-
 
 def iso_code(name: str) -> str:
     """Get ISO 639-1 code from English or native name."""

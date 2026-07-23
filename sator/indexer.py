@@ -7,7 +7,7 @@ import re
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Optional, List, Callable, Tuple
+from typing import List, Callable
 from sator.quality import QualityInfo
 
 @dataclass
