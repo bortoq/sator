@@ -5,13 +5,13 @@ Multi-tracker torrent search and filtering tool with qBittorrent integration.
 ```
 sator -s "Rick and Morty S07" -o results.url
 sator -f queries.txt -a                                          # search + auto-add
-sator -f queries.txt -m results.json                             # search + best-match JSON
+sator -f queries.txt -m                                         # show all results (disable best-mode)
 sator -a downloads.txt                                           # add magnets from file
 ```
 
 ## Features
 
-- **6 torrent trackers**: Nyaa, TPB, YTS, SolidTorrents, EZTV, TorrentGalaxy (TGx)
+- **7 torrent trackers**: Nyaa, TPB, YTS, SolidTorrents, EZTV, TorrentGalaxy (TGx), LimeTorrents (blocked)
 - **Filter pipeline**: resolution bounds, size bounds, language, subtitles, blacklist
 - **Language detection**: title parsing + Wikidata auto-detect (original language)
 - **Detail page enrichment**: scrapes metadata when title lacks language/subtitle info
@@ -87,7 +87,7 @@ sator -f queries.txt -o results.url
 sator -s "Rick and Morty S07" -a
 ```
 
-qBittorrent must be running with WebUI enabled at `http://localhost:8080/`.
+qBittorrent must be running with WebUI enabled at `http://localhost:8090/`.
 
 ### Sub-command: run
 
@@ -128,13 +128,13 @@ Without `-t`, subtitle filtering is disabled — all releases pass regardless of
 |------|-------------|
 | `-v`, `--verbose` | Show all results including filtered-out (with `✗` prefix) |
 | `-tt`, `--tracker-titles` | Show tracker source per result |
-| `-m FILE`, `--more FILE` | Best-mode: score & select best result per query, write JSON |
+| `-m`, `--more` | Show **all** filtered results instead of best-only (disable best-mode) |
 | `-o FILE` | Write output to file (suppresses magnet URIs on stderr) |
 | `-T TRACKER` | Restrict search to specific tracker(s). Repeatable. |
 | `--enrich` | Enable TMDB enrichment (requires `--tmdb-key`) |
 | `--tmdb-key KEY` | TMDB API key |
 | `-a` | Auto-add found torrents to qBittorrent |
-| `-z`, `--original-lang` | Resolve original language via Wikidata |
+
 | `-h`, `--help` | Show help |
 
 ## Trackers
@@ -162,9 +162,9 @@ When a torrent title lacks language or subtitle metadata, sator can scrape the t
 
 ## Blacklist
 
-Built-in blacklist excludes releases matching any of: `CAM`, `TS`, `TELESYNC`, `HDTS`, `HD-CAM`, `SCR`, `SCREENER`, `DVD-SCREENER`, `R5`, `R5.LINE`, `HC`, `TRUEDVD`.
+Built-in blacklist excludes releases matching any of: `CAM`, `HDCAM`, `TELESYNC`, `TS`, `SCR`, `SCREENER`, `HC`, `SUBBED`, `DVDSCR`, `R5`.
 
-Custom exclude patterns via `-e/--exclude` (repeatable).
+Custom exclude patterns via `-e/--exclude` (comma-separated, e.g. `-e CAM,TS,SCR`).
 
 ## Scoring (best-mode)
 

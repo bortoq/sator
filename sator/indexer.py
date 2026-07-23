@@ -214,9 +214,6 @@ class LimeTorrentsIndexer(BaseIndexer):
         return results
 
 
-
-
-
 # ── YTS (Yify) — JSON API, movies only, high quality ─────────────────────
 
 class YTSIndexer(BaseIndexer):

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import time
 from typing import List
 from dataclasses import asdict
 from sator.iso_langs import iso_lookup, iso_name
@@ -16,9 +17,8 @@ from sator.size import parse_size, bytes_to_human
 from sator.wikidata import get_wikidata_original_lang
 from sator.filter import filter_result_json
 from sator.indexer import search_all, INDEXERS
-from sator.qb_client import _qb_add_simple
-import time
 from sator.process import _process_query_internal, TRACKER_LABELS
+from sator.qb_client import _qb_add_simple
 
 def cmd_parse_languages(args: List[str]):
     """Usage: parse-languages <title>"""
