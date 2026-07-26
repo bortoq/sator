@@ -161,7 +161,7 @@ def parse_title(raw_title: str) -> ParsedTitle:
                 r'|BluRay|Blu-Ray|BDRip|BRRip|HDTV|WEBRip|WEB-DL'
                 r'|DTS|AC3|AAC|FLAC|TrueHD|PCM|MP3|Opus'
                 r'|HDR|HDR10|HLG|Dolby[-. ]?Vision|DOVI'
-                r'|REMASTERED|REMUX|REPACK|PROPER|INTERNAL|READNFO)', 
+                r'|REMASTERED|REMUX|REPACK|PROPER|INTERNAL|READNFO)\b', 
                 '', raw_title, flags=re.IGNORECASE
             )
             rg_match = RELEASE_GROUP_DASH.search(cleaned_for_group)

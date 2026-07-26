@@ -21,8 +21,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install package
-        run: pip install -e .
+      - name: Install package with dev dependencies
+        run: |
+          pip install -e .
+          pip install pytest
 
       - name: Run tests
-        run: python3 -m pytest tests/ -v
+        run: python -m pytest tests/ -v
