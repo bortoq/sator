@@ -19,6 +19,8 @@ from sator.filter import filter_result_json
 from sator.indexer import search_all, INDEXERS
 from sator.process import _process_query_internal, TRACKER_LABELS
 from sator.qb_client import _qb_add_simple
+from sator import settings
+from sator.series import expand_series_queries
 
 def cmd_parse_languages(args: List[str]):
     """Usage: parse-languages <title>"""
@@ -68,10 +70,10 @@ def cmd_qb_add(args: List[str]):
     parser = ap.ArgumentParser()
     parser.add_argument('magnet')
     parser.add_argument('--category', default='')
-    parser.add_argument('--tags', default='')
+    parser.add_argument('--tags', nargs='+', default=None)
     parser.add_argument('--ratio', type=float, default=-1)
     parser.add_argument('--seed-time', type=int, default=-1)
-    parser.add_argument('--url', default='http://localhost:8090')
+    parser.add_argument('--url', default=settings.DEFAULT_QB_URL)
     parser.add_argument('--username', default='')
     parser.add_argument('--password', default='')
     try:
@@ -79,9 +81,10 @@ def cmd_qb_add(args: List[str]):
     except SystemExit as e:
         sys.exit(e.code)
 
+    tags_str = ' '.join(parsed.tags) if parsed.tags else ''
     config = QBConfig(url=parsed.url, username=parsed.username, password=parsed.password)
     client = QBClient(config)
-    result = client.add_torrent(parsed.magnet, parsed.category, parsed.tags,
+    result = client.add_torrent(parsed.magnet, parsed.category, tags_str,
                                 parsed.ratio, parsed.seed_time)
     print(json.dumps(result))
 
@@ -237,11 +240,12 @@ def cmd_process_query(args: List[str]):
     parser.add_argument('--zl', type=int, default=None)
     parser.add_argument('--zb', type=int, default=None)
     parser.add_argument('--lang', action='append', default=[])
-    parser.add_argument('--subs', action='append', default=[])
+    parser.add_argument('--subs', nargs='?', const='__original__', default=[], action='append',
+                       help='Subtitle language (ISO 639-1 code or name)')
     parser.add_argument('--qb-add', action='store_true', default=False)
-    parser.add_argument('--qb-url', default='http://localhost:8090')
+    parser.add_argument('--qb-url', default=settings.DEFAULT_QB_URL)
     parser.add_argument('--category', default='')
-    parser.add_argument('--tags', default='')
+    parser.add_argument('--tags', nargs='+', default=None)
     parser.add_argument('-o', '--output', default='')
     parser.add_argument('-v', '--verbose', action='store_true', default=False,
                        help='Verbose output: per-tracker details')
@@ -251,9 +255,9 @@ def cmd_process_query(args: List[str]):
                        help='Show all filtered results instead of best one')
     parser.add_argument('-e', '--exclude', type=str, default='',
                        help='Exclude patterns (comma-separated, e.g. CAM,TS,SCR)')
-    parser.add_argument('--enrich', action='store_true', default=True,
-                       help='Enable TMDB enrichment (default)')
-    parser.add_argument('--no-enrich', action='store_false', dest='enrich',
+    parser.add_argument('-sn', '--season-number', nargs='*', default=None, action='append',
+                       help='Season number (repeatable, no value = all seasons)')
+    parser.add_argument('--no-enrich', action='store_false', dest='enrich', default=True,
                        help='Disable TMDB enrichment')
     parser.add_argument('--tmdb-key', type=str, default='',
                        help='TMDB API key (overrides config file)')
@@ -264,7 +268,14 @@ def cmd_process_query(args: List[str]):
     except SystemExit as e:
         sys.exit(e.code)
 
+    tags_str = ' '.join(parsed.tags) if parsed.tags else ''
     query = ' '.join(parsed.query)
+    # Series enrichment
+    if parsed.season_number:
+        queries = expand_series_queries(query, parsed.season_number)
+    else:
+        queries = [query]
+    
     filters = {
         'rl': parsed.rl,
         'rb': parsed.rb,
@@ -279,12 +290,31 @@ def cmd_process_query(args: List[str]):
         filters['tmdb_key'] = parsed.tmdb_key
     filters['tmdb_enrich'] = parsed.enrich
     
-    out = _process_query_internal(query, filters, parsed.qb_add, parsed.qb_url,
-                                  parsed.category, parsed.tags, parsed.output,
-                                  verbose=parsed.verbose,
-                                  show_tracker_titles=parsed.tracker_titles,
-                                  best_mode=not parsed.more)
-    print(json.dumps(out))
+    results_list = []
+    for q in queries:
+        out = _process_query_internal(q, filters, parsed.qb_add, parsed.qb_url,
+                                      parsed.category, tags_str, parsed.output,
+                                      verbose=parsed.verbose,
+                                      show_tracker_titles=parsed.tracker_titles,
+                                      best_mode=not parsed.more)
+        results_list.append(out)
+    # Merge results from multiple expanded queries
+    merged = {
+        'found': sum(r.get('found', 0) for r in results_list),
+        'added': sum(r.get('added', 0) for r in results_list),
+        'total_size': sum(r.get('total_size', 0) for r in results_list),
+        'magnets': [],
+        'torrents': [],
+        'display_lines': [],
+        'found_any': any(r.get('found_any', False) for r in results_list),
+        'filtered_count': sum(r.get('filtered_count', 0) for r in results_list),
+        'best_indices': [],
+    }
+    for r in results_list:
+        merged['magnets'].extend(r.get('magnets', []))
+        merged['torrents'].extend(r.get('torrents', []))
+        merged['display_lines'].extend(r.get('display_lines', []))
+    print(json.dumps(merged))
 
 
 
@@ -307,40 +337,32 @@ def _parse_magnet_file(path: str) -> list:
 
 
 # ── Built-in defaults ──────────────────────────────────────────────
-DEFAULTS = {
-    'rb': '480',        # resolution lower bound (not below 480p)
-    'rl': '1080',       # resolution upper bound (not above 1080p)
-    'zb': '200m',       # size lower bound (not smaller than 200 MiB)
-    'zl': '8g',         # size upper bound (not larger than 8 GiB)
-    'lang': ['__original__'],  # audio language: original via Wikidata
-    'subs': [],         # subtitle filter: opt-in via -t
-    'trackers': ['nyaa', 'tpb'],  # active trackers only
-}
+# DEFAULTS moved to sator/settings.py
 
 def apply_defaults(args: argparse.Namespace) -> argparse.Namespace:
     """Fill in built-in defaults for args that were not explicitly provided.
     CLI args always take priority over defaults."""
     # Resolution bounds: None → default string
     if args.rl is None:
-        args.rl = DEFAULTS['rl']
+        args.rl = settings.DEFAULT_RL
     if args.rb is None:
-        args.rb = DEFAULTS['rb']
+        args.rb = settings.DEFAULT_RB
     if args.zl is None:
-        args.zl = DEFAULTS['zl']
+        args.zl = settings.DEFAULT_ZL
     if args.zb is None:
-        args.zb = DEFAULTS['zb']
+        args.zb = settings.DEFAULT_ZB
     
     # Language: None (not provided) → ['__original__']
     if args.lang is None:
-        args.lang = list(DEFAULTS['lang'])
+        args.lang = list(settings.DEFAULT_LANG)
     
     # Subtitles: None (not provided) → [] (no filter)
     if args.subs is None:
-        args.subs = list(DEFAULTS['subs'])
+        args.subs = list(settings.DEFAULT_SUBS)
     
     # Trackers: None (not provided) → ['nyaa', 'tpb']
     if getattr(args, 'trackers', None) is None:
-        args.trackers = list(DEFAULTS['trackers'])
+        args.trackers = list(settings.DEFAULT_TRACKERS)
     
     return args
 
@@ -349,7 +371,7 @@ def cmd_run(args: List[str]):
     """Main entry point: replaces the bash script entirely.
     Usage: run <sator-args>  (same CLI as the original sator bash script)
     
-    sator -f <file> -s <string> -a [-rl RES] [-rb RES] [-zl SIZE] [-zb SIZE] 
+    sator -s <query|file> -a [-rl RES] [-rb RES] [-zl SIZE] [-zb SIZE] 
           [-l [LANG]] [-t LANG] [-o FILE] [--category CAT] [--tags TAGS]
     """
     # No args → show help (mimics original bash behavior)
@@ -361,8 +383,7 @@ def cmd_run(args: List[str]):
     parser = ap.ArgumentParser(prog='sator', add_help=False)
     
     # Search sources
-    parser.add_argument('-f', '--file', action='append', default=[], dest='search_files')
-    parser.add_argument('-s', '--string', action='append', default=[], dest='search_strings')
+    parser.add_argument('-s', '--search', action='append', default=[], dest='search_strings')
     
     # Auto-add mode
     parser.add_argument('-a', '--auto-add', nargs='?', const='__flag__', default=None,
@@ -378,7 +399,8 @@ def cmd_run(args: List[str]):
     
     # Language filters (repeatable)
     parser.add_argument('-l', '--lang', nargs='?', const='__original__', default=None, action='append')
-    parser.add_argument('-t', '--subs', action='append', default=None)
+    parser.add_argument('-t', '--subs', nargs='?', const='__original__', default=None, action='append',
+                       help='Subtitle language (ISO 639-1 code or name)')
     
     # Tracker selection
     parser.add_argument('-T', '--trackers', nargs='+', default=None,
@@ -386,8 +408,8 @@ def cmd_run(args: List[str]):
     
     # qBittorrent options
     parser.add_argument('--category', default='')
-    parser.add_argument('--tags', default='')
-    parser.add_argument('--qb-url', default='http://localhost:8090')
+    parser.add_argument('--tags', nargs='+', default=None)
+    parser.add_argument('--qb-url', default=settings.DEFAULT_QB_URL)
     
     # Output file for magnet links
     parser.add_argument('-o', '--output', default='')
@@ -401,9 +423,9 @@ def cmd_run(args: List[str]):
                        help='Show all filtered results instead of best one')
     parser.add_argument('-e', '--exclude', type=str, default='',
                        help='Exclude patterns (comma-separated, e.g. CAM,TS,SCR)')
-    parser.add_argument('--enrich', action='store_true', default=True,
-                       help='Enable TMDB enrichment (default)')
-    parser.add_argument('--no-enrich', action='store_false', dest='enrich',
+    parser.add_argument('-sn', '--season-number', nargs='*', default=None, action='append',
+                       help='Season number (repeatable, no value = all seasons)')
+    parser.add_argument('--no-enrich', action='store_false', dest='enrich', default=True,
                        help='Disable TMDB enrichment')
     parser.add_argument('--tmdb-key', type=str, default='',
                        help='TMDB API key (overrides config file)')
@@ -417,59 +439,46 @@ def cmd_run(args: List[str]):
     
     # Apply built-in defaults to unset args
     parsed = apply_defaults(parsed)
+    tags_str = ' '.join(parsed.tags) if parsed.tags else ''
     
     if parsed.help:
         print(__doc__)
         print("""
+SATOR. multi-tracker torrent search with qBittorrent integration
+
 Usage: sator [options]
 
 Search:
-  -f, --file FILE          Search queries from file (one per line)
-  -s, --string QUERY       Search by query string
-
-Auto-add:
-  -a, --auto-add [FILE]    Auto-add to qBittorrent.
-                           Optional FILE = direct magnet links (no search)
+  -s, --search QUERY|FILE   Search by query string or file path
+  -sn [S] [E] [E] .. [E]    Season number (repeatable, no value = all seasons)
+  -e, --exclude PATTERNS    Exclude patterns, comma-separated (CAM,TS,SCR...)
+  -l [LANG]                 Audio language (ISO 639-1 code or name).
+                            Without value = auto-detect original language via Wikidata
+  -t [LANG]                 Subtitle language (ISO 639-1 code or name)
+                            Without value = auto-detect original language via Wikidata
+  -a, --auto-add [FILE]     Auto-add to qBittorrent.
+                            Optional FILE = direct magnet links (no search)
+  -m, --more                Show all filtered results (default: best only)
+  -o, --output FILE         Save magnet links to FILE
+  -v, --verbose             Show per-tracker results during search
+  -T, --trackers TRACKERS   Trackers: nyaa tpb yts solidtorrents eztv tgx (space-separated)
+  -tt, --tracker-titles     Show tracker names before first search
+  --category CAT            Category for added torrents
+  --tags TAGS               Space-separated tags
+  --qb-url URL              qBittorrent WebUI URL (default: http://localhost:8090)
+  --no-enrich               Disable TMDB enrichment
+  --tmdb-key KEY            TMDB API key (overrides config)
 
 Filters (each at most once):
-  -rl RES    Resolution upper bound, e.g. 1080p
-  -rb RES    Resolution lower bound, e.g. 720p
-  -zl SIZE   Size upper bound, suffixes k/m/g/t
-  -zb SIZE   Size lower bound, suffixes k/m/g/t
-
-Trackers:
-  -T TRACKERS            Trackers: nyaa tpb yts solidtorrents eztv tgx (space-separated)
-
-More / Exclude:
-  -m, --more             Show all filtered results (default: best only)
-  -e, --exclude PATTERNS Exclude patterns, comma-separated (CAM,TS,SCR...)
-
-Filters (repeatable):
-  -l [LANG]  Audio language (ISO 639-1 code or name).
-             Without value = auto-detect original language via Wikidata
-  -t LANG    Subtitle language (ISO 639-1 code or name)
-
-Output:
-  -o, --output FILE   Save magnet links to FILE
-
-Progress:
-  -v, --verbose       Show per-tracker results during search
-  -tt, --tracker-titles  Show tracker names before first search
-
-TMDB (optional):
-  --enrich                     Enable TMDB enrichment (default: on)
-  --no-enrich                  Disable TMDB enrichment
-  --tmdb-key KEY               TMDB API key (overrides config)
-
-qBittorrent:
-  --category CAT      Category for added torrents
-  --tags TAGS         Comma-separated tags
-  --qb-url URL        qBittorrent WebUI URL (default: http://localhost:8090)
+  -rl RES                   Resolution upper bound, e.g. 1080p
+  -rb RES                   Resolution lower bound, e.g. 720p
+  -zl SIZE                  Size upper bound, suffixes k/m/g/t
+  -zb SIZE                  Size lower bound, suffixes k/m/g/t
 """)
         sys.exit(0)
     
     # ── Resolve modes ──────────────────────────────────────────────────────
-    has_search = bool(parsed.search_files or parsed.search_strings)
+    has_search = bool(parsed.search_strings)
     auto_add = parsed.auto_add is not None
     auto_file = ""
     if auto_add and parsed.auto_add != '__flag__':
@@ -494,7 +503,7 @@ qBittorrent:
         magnets = _parse_magnet_file(auto_file)
         added = 0
         for m in magnets:
-            _qb_add_simple(m, parsed.qb_url, parsed.category, parsed.tags)
+            _qb_add_simple(m, parsed.qb_url, parsed.category, tags_str)
             added += 1
         
         print(f'\u2022 Added to qBittorrent: {added} links', file=sys.stderr)
@@ -502,37 +511,45 @@ qBittorrent:
     
     # ── Build queries ──────────────────────────────────────────────────────
     queries = []
-    for f in parsed.search_files:
-        if not os.path.exists(f):
-            print(f'\u2716 File not found: {f}', file=sys.stderr)
-            continue
-        with open(f) as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                # Extract year
-                year = ''
-                ym = re.search(r'([12]\d{3})', line)
-                if ym:
-                    year = ym.group(1)
-                # Clean title from format: N. **Title** -- Year
-                cleaned = ''
-                if re.match(r'^\d+\.', line):
-                    cleaned = re.sub(r'^\d+\.\s*\*\*', '', line)
-                    cleaned = re.sub(r'\*\*.*', '', cleaned)
-                    cleaned = re.sub(r'\s*—\s*$', '', cleaned).strip()
-                    cleaned = re.sub(r'\s*/.*', '', cleaned).strip()
-                if not cleaned:
-                    cleaned = re.sub(r'^[-*]*\s*', '', line).strip()
-                if not cleaned:
-                    continue
-                if year:
-                    cleaned = f'{cleaned} {year}'
-                queries.append(cleaned)
-    
+        
     for s in parsed.search_strings:
-        queries.append(s)
+        if os.path.isfile(s):
+            # Argument is an existing file → read queries from it
+            try:
+                with open(s) as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        year = ''
+                        ym = re.search(r'([12]\d{3})', line)
+                        if ym:
+                            year = ym.group(1)
+                        cleaned = ''
+                        if re.match(r'^\d+\.', line):
+                            cleaned = re.sub(r'^\d+\.\s*\*\*', '', line)
+                            cleaned = re.sub(r'\*\*.*', '', cleaned)
+                            cleaned = re.sub(r'\s*—\s*$', '', cleaned).strip()
+                            cleaned = re.sub(r'\s*/.*', '', cleaned).strip()
+                        if not cleaned:
+                            cleaned = re.sub(r'^[-*]*\s*', '', line).strip()
+                        if not cleaned:
+                            continue
+                        if year:
+                            cleaned = f'{cleaned} {year}'
+                        queries.append(cleaned)
+            except OSError as e:
+                print(f'\u2716 Error reading {s}: {e}', file=sys.stderr)
+        else:
+            # Regular query string
+            queries.append(s)
+    
+    # ── Series enrichment ─────────────────────────────────────────────────
+    if parsed.season_number:
+        expanded = []
+        for q in queries:
+            expanded.extend(expand_series_queries(q, parsed.season_number))
+        queries = expanded
     
     if not queries:
         if parsed.tracker_titles:
@@ -544,17 +561,18 @@ qBittorrent:
         sys.exit(1)
     
     # ── Cache dir ──────────────────────────────────────────────────────────
-    cache_dir = os.path.expanduser('~/.cache/sator')
+    cache_dir = os.path.expanduser(settings.CACHE_DIR)
     wiki_cache = os.path.join(cache_dir, 'wikilang.json')
     os.makedirs(cache_dir, exist_ok=True)
     
-    # ── Wikidata language resolution ───────────────────────────────────────
+    # ── Wikidata language / subtitle resolution ──────────────────────────
     orig_lang_map = {}
     has_original = '__original__' in parsed.lang
     lang_filters = [l for l in parsed.lang if l != '__original__']
-    subs_filters = parsed.subs
+    has_original_subs = parsed.subs and '__original__' in parsed.subs
+    subs_filters = [s for s in (parsed.subs or []) if s != '__original__']
     
-    if has_original:
+    if has_original or has_original_subs:
         print('\u2022 Resolving original languages via Wikidata...', file=sys.stderr)
         for q in queries:
             if q in orig_lang_map:
@@ -573,10 +591,10 @@ qBittorrent:
         if not val:
             return None
         v = val.lower()
-        if '2160' in v or '4k' in v: return 2160
-        if '1080' in v or 'fhd' in v: return 1080
-        if '720' in v or 'hd' in v: return 720
-        if '480' in v or 'sd' in v: return 480
+        if '2160' in v or '4k' in v: return settings.RES_4K
+        if '1080' in v or 'fhd' in v: return settings.RES_FHD
+        if '720' in v or 'hd' in v: return settings.RES_HD
+        if '480' in v or 'sd' in v: return settings.RES_SD
         return None
     
     def _size_bytes(val):
@@ -596,10 +614,13 @@ qBittorrent:
     for i, q in enumerate(queries):
         num = i + 1
         
-        # Build current language filters
+        # Build current language / subtitle filters
         current_lang = list(lang_filters)
         if q in orig_lang_map and orig_lang_map[q]:
             current_lang.append(orig_lang_map[q])
+        current_subs = list(subs_filters)
+        if has_original_subs and q in orig_lang_map and orig_lang_map[q]:
+            current_subs.append(orig_lang_map[q])
         
         # Build filters dict
         filters = {}
@@ -612,13 +633,13 @@ qBittorrent:
         if zl is not None: filters['zl'] = zl
         if zb is not None: filters['zb'] = zb
         if current_lang: filters['lang'] = current_lang
-        if subs_filters: filters['subs'] = subs_filters
+        if current_subs: filters['subs'] = current_subs
         if parsed.exclude: filters['excludes'] = [x.strip() for x in parsed.exclude.split(',') if x.strip()]
         if parsed.tmdb_key: filters['tmdb_key'] = parsed.tmdb_key
         filters['tmdb_enrich'] = parsed.enrich
         # Call internal processing
         result = _process_query_internal(q, filters, auto_add, parsed.qb_url,
-                                        parsed.category, parsed.tags, parsed.output,
+                                        parsed.category, tags_str, parsed.output,
                                         verbose=parsed.verbose,
                                         show_tracker_titles=parsed.tracker_titles,
                                         query_num=num, total_queries=total,
@@ -660,8 +681,9 @@ qBittorrent:
             if t.get('magnet'):
                 print(t['magnet'])
     
-    # To file (if -o specified)
-    if parsed.output and all_torrents:
+    # To file (if -o specified) — always truncate/creates file,
+    # write magnets+metadata only if results exist
+    if parsed.output:
         try:
             with open(parsed.output, 'w') as f:
                 for t in all_torrents:
@@ -676,6 +698,13 @@ qBittorrent:
 
 
 def main():
+    try:
+        _main()
+    except KeyboardInterrupt:
+        print('', file=sys.stderr)
+        sys.exit(130)
+
+def _main():
     # If first arg is a flag or no args, dispatch to run (the full CLI workflow)
     if len(sys.argv) < 2:
         cmd_run(['--help'])

@@ -7,45 +7,48 @@ from sator.indexer import search_all, _enrich_from_detail
 from sator.filter import filter_result_json
 from sator.qb_client import _qb_add_simple
 from sator.size import bytes_to_human
+from sator import settings
 from sator.tmdb import enrich_query
+from sator.quality import parse_quality
+from sator.language import parse_languages
+from sator.exclude import is_excluded
 
 
 # Scoring for best-mode selection
-_TRUSTED_GROUPS = ['FLUX', 'NTb', 'DON', 'CtrlHD', 'HONE', 'SPARKS']
+# settings.TRUSTED_GROUPS moved to sator/settings.py
 
-_SOURCE_SCORES = {
-    'BluRay': 40, 'WEB-DL': 25, 'WEBRip': 15,
-    'HDTV': 5, 'BDRip': 30, 'DVDRip': 10,
-    'CAM': -50, 'TELESYNC': -40, 'SCREENER': -30,
-    'TELECINE': -20, 'WORKPRINT': -10,
-}
+# _SOURCE_SCORES moved to sator/settings.py
 
-def _score_result(t: dict, preferred_res: int = 1080) -> float:
+def _score_result(t: dict, preferred_res: int = settings.PREFERRED_RES) -> float:
     '''Score a filtered torrent result for best-mode selection.'''
     score = 0.0
 
-    # 1. Seeders (capped at 100)
-    score += min(t.get('seeders', 0), 100) * 1.0
+    # 1. Download efficiency: more seeders per GB = faster download
+    #    Cap seeders at 100 (user channel is the bottleneck beyond that)
+    #    Floor size at 0.1 GB to avoid division by zero
+    seeders = min(t.get('seeders', 0), settings.SEEDER_CAP)
+    size_gb = max(t.get('size_bytes', 0) / (1024 ** 3), settings.SIZE_FLOOR_GB)
+    score += seeders / size_gb * settings.EFFICIENCY_WEIGHT
 
     # 2. Source quality
     src = t.get('_quality', {}).get('source', '')
-    score += _SOURCE_SCORES.get(src, 0)
+    score += settings.SOURCE_SCORES.get(src, 0)
 
     # 3. Resolution match
     res = t.get('_quality', {}).get('resolution', 0)
     if res == preferred_res:
-        score += 30
-    elif res > 0 and abs(res - preferred_res) <= 360:
-        score += 15
+        score += settings.EXACT_RES_BONUS
+    elif res > 0 and abs(res - preferred_res) <= settings.CLOSE_RES_THRESHOLD:
+        score += settings.CLOSE_RES_BONUS
 
     # 4. Reasonable size (not too small, not too large)
     size_gb = t.get('size_bytes', 0) / (1024**3)
-    if 1.0 <= size_gb <= 15.0:
-        score += 10
+    if settings.REASONABLE_SIZE_MIN_GB <= size_gb <= settings.REASONABLE_SIZE_MAX_GB:
+        score += settings.REASONABLE_SIZE_BONUS
 
     # 5. Trusted release groups
     title = t.get('title', '')
-    if any(g in title for g in _TRUSTED_GROUPS):
+    if any(g in title for g in settings.TRUSTED_GROUPS):
         score += 20
 
     return score
@@ -61,10 +64,14 @@ TRACKER_LABELS = {
     'solidtorrents': 'SolidTorrents',
     'eztv': 'EZTV',
     'tgx': 'TorrentGalaxy',
+    'yourbittorrent': 'YourBittorrent',
+    'torrentfunk': 'TorrentFunk',
+    'magnetz': 'Magnetz',
+    'glotorrents': 'GloTorrents',
 }
 
 # Fixed order for compact status chars
-TRACKER_ORDER = ['nyaa', 'tpb', 'yts', 'solidtorrents', 'eztv', 'tgx', 'limetorrents']
+TRACKER_ORDER = ['nyaa', 'tpb', 'yts', 'solidtorrents', 'eztv', 'tgx', 'limetorrents', 'yourbittorrent', 'torrentfunk', 'magnetz', 'glotorrents']
 
 def _make_progress_cb(query_num: int, total_queries: int, query: str,
                        verbose: bool, status_chars: list,
@@ -113,7 +120,7 @@ def _make_progress_cb(query_num: int, total_queries: int, query: str,
 
 
 def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
-                           qb_url: str = 'http://localhost:8090',
+                           qb_url: str = settings.DEFAULT_QB_URL,
                            category: str = '', tags: str = '',
                            output_file: str = '',
                            verbose: bool = False,
@@ -180,6 +187,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
     # Process and filter results
     all_filtered = 0
     best_src = None
+    _fallback_candidates = []
     # Cache for detail page enrichment (by info_url)
     _enrich_cache = {}
     
@@ -221,6 +229,12 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             # Track per-tracker filtered count
             if r.source in filtered_out:
                 filtered_out[r.source] += 1
+            # Collect fallback candidate (for both best-mode and -m)
+            excludes = filters.get('excludes', [])
+            if not excludes or not is_excluded(d.get('title', ''), excludes):
+                d['_quality'] = asdict(parse_quality(d.get('title', '')))
+                d['_languages'] = parse_languages(d.get('title', ''))
+                _fallback_candidates.append(d)
             # In verbose mode, show filtered-out items too
             if verbose:
                 size_h_raw = bytes_to_human(d.get('size_bytes', 0))
@@ -266,16 +280,34 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             'seeders': seeders,
             'quality_label': qlabel,
             'magnet': magnet if magnet else '',
+            '_quality': q,
         })
         
         # qb_add is handled below (best-mode or fallback)
     
     out['filtered_count'] = all_filtered
     
+    # ── Not best-mode: sort all results by score ──
+    if not best_mode and out['torrents']:
+        scored = [(t, _score_result(t)) for t in out['torrents']]
+        scored.sort(key=lambda x: (x[0].get('seeders', 0) == 0, -x[1]))
+        out['torrents'] = [t for t, _ in scored]
+        out['magnets'] = [t.get('magnet', '') for t in out['torrents'] if t.get('magnet')]
+        out['display_lines'] = []
+        for t in out['torrents']:
+            title = t.get('title', '')
+            size_h = t.get('size_h', '')
+            qlabel = t.get('quality_label', '')
+            seeders = t.get('seeders', 0)
+            out['display_lines'].append(f"  \u2713 {title}")
+            out['display_lines'].append(f"    {qlabel} ({size_h}) seeds:{seeders}")
+            if t.get('magnet') and not output_file:
+                out['display_lines'].append(f"    {t['magnet']}")
+    
     # --- Best mode: select single best result ---
     if best_mode and out['torrents']:
         scored = [(_score_result(t), t) for t in out['torrents']]
-        scored.sort(key=lambda x: x[0], reverse=True)
+        scored.sort(key=lambda x: (x[1].get('seeders', 0) == 0, -x[0]))
         best_score, best = scored[0]
         
         # Replace all torrents with just the best one
@@ -310,7 +342,92 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
                 _qb_add_simple(t['magnet'], qb_url, category, tags)
                 out['added'] += 1
     
-    # best_src is captured during the filter loop (line 198)
+        
+    # ── Fallback: no results passed filters → return filtered-out items ──
+    # best_mode: pick single best;  not best_mode: return all (‑m behaviour)
+    if not out['torrents'] and _fallback_candidates:
+        # Score all candidates
+        scored = [(t, _score_result(t)) for t in _fallback_candidates]
+        scored.sort(key=lambda x: (x[0].get('seeders', 0) == 0, -x[1]))
+        
+        if best_mode:
+            # Single best result
+            best, raw_score = scored[0]
+            size_bytes = best.get('size_bytes', 0)
+            seeders = best.get('seeders', 0)
+            source = best.get('source', '')
+            q = best.get('_quality', {})
+            qlabel = q.get('quality_label', 'Unknown')
+            size_h = bytes_to_human(size_bytes)
+            title = best.get('title', '')
+            magnet = best.get('magnet', '')
+            
+            out['torrents'] = [{
+                'title': title, 'size_h': size_h, 'size_bytes': size_bytes,
+                'source': source, 'seeders': seeders,
+                'quality_label': qlabel, 'magnet': magnet if magnet else '',
+                '_fallback': True,
+            }]
+            out['found'] = 1
+            out['found_any'] = True
+            out['magnets'] = [magnet] if magnet else []
+            out['total_size'] = size_bytes
+            out['display_lines'] = [
+                f"  \u26a0 {title} (fallback)",
+                f"    {qlabel} ({size_h}) [{source}] seeds:{seeders}",
+            ]
+            if magnet and not output_file:
+                out['display_lines'].append(f"    {magnet}")
+            
+            out['added'] = 0
+            if qb_add and magnet:
+                _qb_add_simple(magnet, qb_url, category, tags)
+                out['added'] = 1
+            
+            if source:
+                best_src = source
+                out['best_indices'].append(source)
+        else:
+            # All results mode (‑m): return all fallback candidates
+            fb_list = []
+            out['display_lines'] = [f"  \u26a0 {len(scored)} fallback results (filters did not match)"]
+            out['found_any'] = True
+            out['magnets'] = []
+            out['total_size'] = 0
+            
+            for t, raw_score in scored:
+                size_bytes = t.get('size_bytes', 0)
+                seeders = t.get('seeders', 0)
+                source = t.get('source', '')
+                q = t.get('_quality', {})
+                qlabel = q.get('quality_label', 'Unknown')
+                size_h = bytes_to_human(size_bytes)
+                title = t.get('title', '')
+                magnet = t.get('magnet', '')
+                
+                fb_list.append({
+                    'title': title, 'size_h': size_h, 'size_bytes': size_bytes,
+                    'source': source, 'seeders': seeders,
+                    'quality_label': qlabel, 'magnet': magnet if magnet else '',
+                    '_fallback': True,
+                })
+                if magnet:
+                    out['magnets'].append(magnet)
+                out['total_size'] += size_bytes
+                out['display_lines'].append(f"  \u26a0 {title}")
+                out['display_lines'].append(f"    {qlabel} ({size_h}) [{source}] seeds:{seeders}")
+            
+            out['torrents'] = fb_list
+            out['found'] = len(fb_list)
+            
+            out['added'] = 0
+            if qb_add:
+                for t in fb_list:
+                    if t.get('magnet'):
+                        _qb_add_simple(t['magnet'], qb_url, category, tags)
+                        out['added'] += 1
+    
+    # best_src is captured during the filter loop
     # It remains set for the status chars below
     
     # Update status chars after filtering
@@ -345,12 +462,5 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         print(f'  \u2192 {total_found} matches after filters  ({total_raw} total, {total_filtered} removed)',
               file=sys.stderr)
     
-    if output_file and out['magnets']:
-        try:
-            with open(output_file, 'w') as f:
-                for m in out['magnets']:
-                    f.write(m + '\n')
-        except OSError as e:
-            print(f"Error writing {output_file}: {e}", file=sys.stderr)
     
     return out

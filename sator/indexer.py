@@ -9,6 +9,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import List, Callable
 from sator.quality import QualityInfo
+from sator import settings
 
 @dataclass
 class TorrentResult:
@@ -37,9 +38,9 @@ class NyaaIndexer(BaseIndexer):
     def search(self, query: str) -> List[TorrentResult]:
         sq = urllib.parse.quote(query)
         url = f"https://nyaa.si/?q={sq}&f=0&c=0_0"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'})
+        req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
         try:
-            resp = urllib.request.urlopen(req, timeout=15)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
             html = resp.read().decode('utf-8', errors='replace')
         except Exception:
             return []
@@ -104,7 +105,7 @@ class TPBIndexer(BaseIndexer):
                 req = urllib.request.Request(url, headers={
                     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
                 })
-                resp = urllib.request.urlopen(req, timeout=20)
+                resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_TPB)
                 page_html = resp.read().decode('utf-8', errors='replace')
                 if page_html and 'magnet:' in page_html:
                     break
@@ -130,7 +131,7 @@ class TPBIndexer(BaseIndexer):
             info_url = um.group(1) if um else ""
             # Ensure absolute URL
             if info_url and not info_url.startswith('http'):
-                info_url = "https://tpb.party" + info_url
+                info_url = settings.TPB_FALLBACK_URL + info_url
             mm = re.search(r'href="(magnet:[^"]*)"', r)
             if not mm:
                 continue
@@ -167,12 +168,12 @@ class LimeTorrentsIndexer(BaseIndexer):
         sq = urllib.parse.quote(query)
         html = None
         # Try GET first
-        url = f"https://www.limetorrents.fun/search?q={sq}"
+        url = f"{settings.LIMETORRENTS_BASE_URL}/search?q={sq}"
         try:
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
             })
-            resp = urllib.request.urlopen(req, timeout=15)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_LIMETORRENTS)
             html = resp.read().decode('utf-8', errors='replace')
         except Exception:
             pass
@@ -186,14 +187,14 @@ class LimeTorrentsIndexer(BaseIndexer):
             try:
                 data = urllib.parse.urlencode({'q': sq}).encode()
                 req = urllib.request.Request(
-                    "https://www.limetorrents.fun/post/search.php",
+                    f"{settings.LIMETORRENTS_BASE_URL}/post/search.php",
                     data=data,
                     headers={
                         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
                         'Content-Type': 'application/x-www-form-urlencoded'
                     }
                 )
-                resp = urllib.request.urlopen(req, timeout=15)
+                resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_LIMETORRENTS)
                 html = resp.read().decode('utf-8', errors='replace')
             except Exception:
                 return []
@@ -204,12 +205,12 @@ class LimeTorrentsIndexer(BaseIndexer):
         results = []
         for m in re.finditer(r'<a\s+href="(/torrent/\d+/[^"]*)"\s+title="([^"]*)"', html):
             title = htmlmod.unescape(m.group(2)).strip()
-            href = "https://www.limetorrents.fun" + m.group(1)
+            href = settings.LIMETORRENTS_BASE_URL + m.group(1)
             results.append(TorrentResult(
                 title=title, magnet="", size_bytes=0, seeders=0,
                 source="limetorrents", info_url=href
             ))
-            if len(results) > 30:
+            if len(results) > settings.MAX_LIMETORRENTS_RESULTS:
                 break
         return results
 
@@ -222,12 +223,12 @@ class YTSIndexer(BaseIndexer):
 
     def search(self, query: str) -> List[TorrentResult]:
         sq = urllib.parse.quote(query)
-        url = f"https://yts.mx/api/v2/list_movies.json?query_term={sq}&limit=50"
+        url = f"https://yts.mx/api/v2/list_movies.json?query_term={sq}&limit={settings.YTS_API_LIMIT}"
         try:
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
             })
-            resp = urllib.request.urlopen(req, timeout=15)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_YTS)
             data = json.loads(resp.read().decode())
         except Exception:
             return []
@@ -292,27 +293,31 @@ class SolidTorrentsIndexer(BaseIndexer):
 
     def search(self, query: str) -> List[TorrentResult]:
         sq = urllib.parse.quote(query)
-        url = f"https://solidtorrents.net/api/v1/search?q={sq}"
+        url = f"{settings.SOLIDTORRENTS_API_URL}{sq}"
         try:
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
             })
-            resp = urllib.request.urlopen(req, timeout=15)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_SOLIDTORRENTS)
             data = json.loads(resp.read().decode())
         except Exception:
             return []
 
         items = data.get('results', []) if isinstance(data, dict) else []
         results = []
-        for item in items[:50]:
-            name = item.get('name', '')
-            if not name:
+        for item in items[:settings.MAX_SOLIDTORRENTS_RESULTS]:
+            title = item.get('title', '')
+            if not title:
                 continue
-            magnet = item.get('magnet', '')
+            ih = item.get('infohash', '')
+            if not ih:
+                continue
+            # Build magnet link from info hash
+            magnet = f"magnet:?xt=urn:btih:{ih}&dn={urllib.parse.quote(title)}&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://tracker.torrent.eu.org:451/announce"
             size_bytes = int(item.get('size', 0))
             seeds = int(item.get('seeders', 0))
             results.append(TorrentResult(
-                title=htmlmod.unescape(name), magnet=magnet,
+                title=htmlmod.unescape(title), magnet=magnet,
                 size_bytes=size_bytes, seeders=seeds, source="solidtorrents"
             ))
         return results
@@ -331,7 +336,7 @@ class EZTVIndexer(BaseIndexer):
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
             })
-            resp = urllib.request.urlopen(req, timeout=15)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
             html = resp.read().decode('utf-8', errors='replace')
         except Exception:
             return []
@@ -383,7 +388,7 @@ class TGxIndexer(BaseIndexer):
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
             })
-            resp = urllib.request.urlopen(req, timeout=15)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
             html = resp.read().decode('utf-8', errors='replace')
         except Exception:
             return []
@@ -469,7 +474,7 @@ def _enrich_from_detail(result: TorrentResult) -> dict:
         req = urllib.request.Request(result.info_url, headers={
             'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
         })
-        resp = urllib.request.urlopen(req, timeout=10)
+        resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_DETAIL)
         html = resp.read().decode('utf-8', errors='replace')
     except Exception:
         return {}
@@ -526,6 +531,135 @@ def _enrich_from_detail(result: TorrentResult) -> dict:
     return enriched
 
 
+
+# ── Magnetz — JSON API ─────────────────────────────────────────────────
+
+class MagnetzIndexer(BaseIndexer):
+    """Magnetz.eu torrent search via JSON API."""
+    name = "magnetz"
+
+    def search(self, query: str) -> List[TorrentResult]:
+        sq = urllib.parse.quote(query)
+        url = f"https://magnetz.eu/api/magnets/search?query={sq}"
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_NYAA)
+            data = json.loads(resp.read().decode())
+        except Exception:
+            return []
+        items = data.get('data', [])
+        results = []
+        for item in items:
+            name = item.get('name', '')
+            magnet = item.get('magnet_link', '')
+            if not name or not magnet:
+                continue
+            size_bytes = int(item.get('size', 0))
+            health = item.get('health', 0)
+            # Estimate seeders from health (0-1) and total swarm
+            # health * some_factor isn't reliable; use 0 as default
+            results.append(TorrentResult(
+                title=name, magnet=magnet, size_bytes=size_bytes,
+                seeders=0, source=self.name,
+            ))
+        return results
+
+
+# 
+# ── GloTorrents — HTML scraping ────────────────────────────────────────
+
+class GloTorrentsIndexer(BaseIndexer):
+    """GloTorrents (glodls.to) torrent indexer via HTML scraping."""
+    name = "glotorrents"
+
+    def search(self, query: str) -> List[TorrentResult]:
+        sq = urllib.parse.quote(query)
+        url = f"{settings.GLOTORRENTS_BASE_URL}/search_results.php?search={sq}"
+        try:
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml',
+            })
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_NYAA)
+            html = resp.read().decode('utf-8', errors='replace')
+        except Exception:
+            return []
+        results = []
+        for row in re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL):
+            if '<th' in row:
+                continue
+            mm = re.search(r'href="(magnet:[^"]*)"', row)
+            if not mm:
+                continue
+            magnet = htmlmod.unescape(mm.group(1))
+            # Title from <a title="..."
+            tm = re.search(r'<a[^>]*title="([^"]*)"', row)
+            if not tm:
+                continue
+            title = htmlmod.unescape(tm.group(1)).strip()
+            # Size: find <td class='ttable_col1' align='center'>X.XX GB</td>
+            tds = re.findall(r"<td[^>]*class='ttable_col[12]'[^>]*align='center'[^>]*>([^<]*)</td>", row)
+            size_bytes = 0
+            if len(tds) >= 1:
+                sm = re.match(r'([0-9.]+)\s*(TB|GB|MB|KB)', tds[0].strip(), re.I)
+                if sm:
+                    num = float(sm.group(1))
+                    unit = sm.group(2).upper()
+                    if unit == 'TB': size_bytes = int(num * 1024**4)
+                    elif unit == 'GB': size_bytes = int(num * 1024**3)
+                    elif unit == 'MB': size_bytes = int(num * 1024**2)
+                    elif unit == 'KB': size_bytes = int(num * 1024)
+            # Seeders: <font color='green'><b>N</b></font>
+            sdm = re.search(r"<font color='green'><b>([0-9]+)</b></font>", row)
+            seeders = int(sdm.group(1)) if sdm else 0
+            results.append(TorrentResult(
+                title=title, magnet=magnet, size_bytes=size_bytes,
+                seeders=seeders, source=self.name,
+            ))
+        return results
+
+
+# ── YourBittorrent / TorrentFunk — identical JSON API ───────────────────
+
+class _YBLikeIndexer(BaseIndexer):
+    """Base for trackers using the YourBittorrent/TorrentFunk JSON API."""
+    base_url = ""  # set by subclass
+
+    def search(self, query: str) -> List[TorrentResult]:
+        sq = urllib.parse.quote(query)
+        url = f"{self.base_url}/api/search.json?q={sq}&limit=100"
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_NYAA)
+            data = json.loads(resp.read().decode())
+        except Exception:
+            return []
+        raw = data.get('results', [])
+        results = []
+        for r in raw:
+            name = r.get('name', '')
+            magnet = r.get('magnet', '')
+            if not name or not magnet:
+                continue
+            size_bytes = int(r.get('size_bytes', 0))
+            seeds = int(r.get('seeds', 0))
+            results.append(TorrentResult(
+                title=name, magnet=magnet, size_bytes=size_bytes,
+                seeders=seeds, source=self.name,
+            ))
+        return results
+
+
+class YourBittorrentIndexer(_YBLikeIndexer):
+    name = "yourbittorrent"
+    base_url = "https://yourbittorrent.com"
+
+
+class TorrentFunkIndexer(_YBLikeIndexer):
+    name = "torrentfunk"
+    base_url = "https://www.torrentfunk.com"
+
+
 # Registry of available indexers
 INDEXERS = {
     'nyaa': NyaaIndexer(),
@@ -535,6 +669,10 @@ INDEXERS = {
     'solidtorrents': SolidTorrentsIndexer(),
     'eztv': EZTVIndexer(),
     'tgx': TGxIndexer(),
+    'yourbittorrent': YourBittorrentIndexer(),
+    'torrentfunk': TorrentFunkIndexer(),
+    'magnetz': MagnetzIndexer(),
+    'glotorrents': GloTorrentsIndexer(),
 }
 
 def search_all(query: str, trackers: List[str] = None,
@@ -547,7 +685,7 @@ def search_all(query: str, trackers: List[str] = None,
       - 'error': failed, error_msg=reason
     """
     if trackers is None:
-        trackers = ['nyaa', 'tpb']
+        trackers = list(settings.DEFAULT_TRACKERS)
     results = []
     for name in trackers:
         indexer = INDEXERS.get(name)
@@ -565,3 +703,4 @@ def search_all(query: str, trackers: List[str] = None,
                 progress_cb(name, 'error', 0, str(e))
             continue
     return results
+

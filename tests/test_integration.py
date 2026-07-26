@@ -84,8 +84,13 @@ class TestProcessQueryIntegration:
             qb_add=False, verbose=False, best_mode=True,
             trackers=['nyaa'],
         )
-        assert result['found_any'] is False
-        assert result['found'] == 0
+        # Fallback: no exact match → best filtered-out result
+        assert result['found_any'] is True, "fallback should set found_any"
+        assert result['found'] == 1, "fallback should return 1 result"
+        assert len(result['torrents']) == 1
+        assert result['torrents'][0].get('_fallback') is True, "should be marked as fallback"
+        # Still no results that actually passed filters
+        assert result['filtered_count'] > 0
 
     @patch('urllib.request.urlopen')
     def test_subtitle_filter_passes_subbed(self, mock_urlopen):
@@ -121,7 +126,10 @@ class TestProcessQueryIntegration:
             qb_add=False, verbose=False, best_mode=True,
             trackers=['nyaa'],
         )
-        assert result['found_any'] is False
+        # Fallback: no exact match → best filtered-out result
+        assert result['found_any'] is True
+        assert result['found'] == 1
+        assert result['torrents'][0].get('_fallback') is True
 
     @patch('urllib.request.urlopen')
     def test_no_subtitle_filter_allows_all(self, mock_urlopen):

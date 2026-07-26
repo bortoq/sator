@@ -6,6 +6,7 @@ import os
 import re
 import urllib.parse
 import urllib.request
+from sator import settings
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # WIKIDATA ORIGINAL LANGUAGE LOOKUP
@@ -78,28 +79,10 @@ def get_wikidata_original_lang(query: str, cache_file: str = "") -> str:
     try:
         # 1. Wikipedia search — try multiple queries, iterate results
         queries_to_try = [
-            query + ' TV series',
-            query + ' film',
             query,
+            query + ' film',
+            query + ' TV series',
         ]
-        pages = []
-        for sq in queries_to_try:
-            params = urllib.parse.urlencode({
-                'action': 'query', 'list': 'search',
-                'srsearch': sq, 'format': 'json', 'srlimit': 3
-            })
-            req = urllib.request.Request(
-                f'https://en.wikipedia.org/w/api.php?{params}',
-                headers={'User-Agent': 'sator/0.1'}
-            )
-            resp = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
-            pages = resp.get('query', {}).get('search', [])
-            if pages:
-                break
-        if not pages:
-            return ""
-
-        # 2. Get wikibase ID — try pages in order until we find valid language info
         def _get_lang_for_title(wp_title):
             params = urllib.parse.urlencode({
                 'action': 'query', 'prop': 'pageprops',
@@ -107,9 +90,9 @@ def get_wikidata_original_lang(query: str, cache_file: str = "") -> str:
             })
             req = urllib.request.Request(
                 f'https://en.wikipedia.org/w/api.php?{params}',
-                headers={'User-Agent': 'sator/0.1'}
+                headers={'User-Agent': settings.UA_SATOR}
             )
-            resp = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
+            resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
             eid = None
             for pid, pdata in resp.get('query', {}).get('pages', {}).items():
                 if 'pageprops' in pdata and 'wikibase_item' in pdata['pageprops']:
@@ -120,9 +103,9 @@ def get_wikidata_original_lang(query: str, cache_file: str = "") -> str:
             # 3. Get Wikidata entity
             req = urllib.request.Request(
                 f'https://www.wikidata.org/wiki/Special:EntityData/{eid}.json',
-                headers={'User-Agent': 'sator/0.1'}
+                headers={'User-Agent': settings.UA_SATOR}
             )
-            resp = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
+            resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
             claims = resp.get('entities', {}).get(eid, {}).get('claims', {})
             lang_claim = claims.get('P364', []) or claims.get('P407', []) or claims.get('P2439', [])
             if not lang_claim:
@@ -133,12 +116,36 @@ def get_wikidata_original_lang(query: str, cache_file: str = "") -> str:
             return WIKIDATA_ISO.get(lang_q, "")
 
         iso = ""
-        for p in pages:
-            iso = _get_lang_for_title(p['title'])
+        for sq in queries_to_try:
+            params = urllib.parse.urlencode({
+                'action': 'query', 'list': 'search',
+                'srsearch': sq, 'format': 'json', 'srlimit': settings.WIKIPEDIA_SRLIMIT
+            })
+            req = urllib.request.Request(
+                f'https://en.wikipedia.org/w/api.php?{params}',
+                headers={'User-Agent': settings.UA_SATOR}
+            )
+            resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
+            pages = resp.get('query', {}).get('search', [])
+            if not pages:
+                continue
+            # Extract meaningful words from the cleaned query for relevance
+            query_words = set(w for w in re.sub(r'[^a-z0-9 ]', ' ', query).split() if len(w) > 1)
+            for p in pages:
+                # Skip if the result title doesn't share at least one word with
+                # the original query — avoids false positives from unrelated pages
+                if query_words:
+                    title_lower = p['title'].lower()
+                    if not any(w in title_lower for w in query_words):
+                        continue
+                iso = _get_lang_for_title(p['title'])
+                if iso:
+                    break
             if iso:
                 break
         if not iso:
             return ""
+
 
         # Cache result
         if iso and cache_file:

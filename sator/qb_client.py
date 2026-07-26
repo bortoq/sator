@@ -5,11 +5,12 @@ import json
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from sator import settings
 from typing import Optional, List
 
 @dataclass
 class QBConfig:
-    url: str = "http://localhost:8090"
+    url: str = settings.DEFAULT_QB_URL
     username: str = ""
     password: str = ""
 
@@ -27,7 +28,7 @@ class QBClient:
         encoded = urllib.parse.urlencode(data or {})
         req = urllib.request.Request(url, data=encoded.encode() if data else None,
                                      method=method)
-        req.add_header('User-Agent', 'sator/0.1')
+        req.add_header('User-Agent', settings.UA_SATOR)
         if self._cookie:
             req.add_header('Cookie', self._cookie)
 
@@ -36,7 +37,7 @@ class QBClient:
             if self.config.username and not self._cookie:
                 self._auth()
 
-            resp = urllib.request.urlopen(req, timeout=15)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_QB)
             if endpoint == 'auth/login':
                 self._cookie = resp.headers.get('Set-Cookie', '')
             body = resp.read().decode()
@@ -68,7 +69,7 @@ class QBClient:
         if category:
             data['category'] = category
         if tags:
-            data['tags'] = tags
+            data['tags'] = tags.replace(' ', ',')
         if ratio_limit >= 0:
             data['ratioLimit'] = str(ratio_limit)
         if seed_time >= 0:
@@ -76,8 +77,8 @@ class QBClient:
 
         result = self._api_call('POST', 'torrents/add', data)
         if result and 'error' not in result:
-            return {"status": "ok", "magnet": magnet[:80] + "..."}
-        return {"status": "error", "error": str(result), "magnet": magnet[:80] + "..."}
+            return {"status": "ok", "magnet": magnet[:settings.MAGNET_TRUNC] + "..."}
+        return {"status": "error", "error": str(result), "magnet": magnet[:settings.MAGNET_TRUNC] + "..."}
 
     def get_torrents(self, filter: str = "all", category: str = "",
                      tags: str = "", sort: str = "") -> List[dict]:
@@ -86,7 +87,7 @@ class QBClient:
         if category:
             data['category'] = category
         if tags:
-            data['tags'] = tags
+            data['tags'] = tags.replace(' ', ',')
         if sort:
             data['sort'] = sort
         return self._api_call('GET', 'torrents/info', data) or []
@@ -121,11 +122,11 @@ def _qb_add_simple(magnet: str, qb_url: str, category: str = '', tags: str = '')
         if category:
             data += '&' + urlencode({'category': category})
         if tags:
-            data += '&' + urlencode({'tags': tags})
+            data += '&' + urlencode({'tags': tags.replace(' ', ',')})
         req = Request(f'{qb_url.rstrip("/")}/api/v2/torrents/add',
                      data=data.encode(),
-                     headers={'User-Agent': 'sator/0.1'})
-        urlopen(req, timeout=10)
+                     headers={'User-Agent': settings.UA_SATOR})
+        urlopen(req, timeout=settings.TIMEOUT_QB_SIMPLE)
     except Exception:
         pass
 

@@ -3,11 +3,9 @@
 
 import re
 from typing import List
+from sator import settings
 
-_DEFAULT_EXCLUDES = [
-    'CAM', 'HDCAM', 'TELESYNC', 'TS', 'SCR', 'SCREENER',
-    'HC', 'SUBBED', 'DVDSCR', 'R5',
-]
+# _DEFAULT_EXCLUDES moved to sator/settings.py
 
 def is_excluded(title: str, excludes: List[str]) -> bool:
     """Check if a torrent title matches any exclude pattern.
@@ -23,7 +21,7 @@ def is_excluded(title: str, excludes: List[str]) -> bool:
         p = pattern.strip().upper()
         if not p:
             continue
-        if len(p) < 5:
+        if len(p) < settings.SHORT_PATTERN_THRESHOLD:
             if p in tokens:
                 return True
         else:

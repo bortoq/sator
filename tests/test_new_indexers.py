@@ -4,7 +4,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from sator.indexer import (
-    YTSIndexer, SolidTorrentsIndexer, EZTVIndexer, TGxIndexer,
+    YTSIndexer, SolidTorrentsIndexer, EZTVIndexer, TGxIndexer, GloTorrentsIndexer,
     TorrentResult, INDEXERS, search_all
 )
 
@@ -108,3 +108,16 @@ def test_progress_cb_with_new_trackers():
     names_in_calls = set(c[0] for c in calls)
     assert 'yts' in names_in_calls
     assert 'solidtorrents' in names_in_calls
+
+
+def test_glotorrents_indexer_registered():
+    """GloTorrentsIndexer is in the INDEXERS registry."""
+    assert 'glotorrents' in INDEXERS
+    assert isinstance(INDEXERS['glotorrents'], GloTorrentsIndexer)
+
+
+def test_glotorrents_search_returns_list():
+    """GloTorrents search returns a list."""
+    idx = GloTorrentsIndexer()
+    result = idx.search("nonexistent_query_xyz")
+    assert isinstance(result, list)

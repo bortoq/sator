@@ -7,6 +7,7 @@ from sator.language import parse_languages
 import re
 from sator.iso_langs import iso_name
 from sator.exclude import is_excluded
+from sator import settings
 
 def filter_result_json(result: dict, filters: dict) -> [dict]:
     """Filter a torrent result dict against filter criteria.
@@ -86,12 +87,12 @@ def _parse_res_filter(val) -> [int]:
     """Parse resolution filter value to integer."""
     val = str(val).lower()
     if '2160' in val or '4k' in val:
-        return 2160
+        return settings.RES_4K
     if '1080' in val or 'fhd' in val:
-        return 1080
+        return settings.RES_FHD
     if '720' in val or 'hd' in val:
-        return 720
+        return settings.RES_HD
     if '480' in val or 'sd' in val:
-        return 480
+        return settings.RES_SD
     return None
 

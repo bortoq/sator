@@ -9,9 +9,10 @@ import os
 import re
 import urllib.parse
 import urllib.request
+from sator import settings
 
 # Default config path
-CONFIG_PATH = os.path.expanduser('~/.config/sator/config')
+CONFIG_PATH = os.path.expanduser(settings.CONFIG_PATH)
 
 # Cache for TMDB queries (in-memory, per session)
 _cache: dict = {}
@@ -41,7 +42,7 @@ def enrich_query(query: str, api_key: str = '') -> str:
         return query
     
     # Skip queries that already have a year
-    if re.search(r'\b(19|20)\d{2}\b', query):
+    if re.search(settings.TMDB_YEAR_PATTERN, query):
         return query
     
     # Check cache
@@ -50,8 +51,8 @@ def enrich_query(query: str, api_key: str = '') -> str:
     
     try:
         url = f'https://api.themoviedb.org/3/search/multi?api_key={key}&query={urllib.parse.quote(query)}'
-        req = urllib.request.Request(url, headers={'User-Agent': 'sator/0.3'})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        req = urllib.request.Request(url, headers={'User-Agent': settings.UA_TMDB})
+        with urllib.request.urlopen(req, timeout=settings.TIMEOUT_TMDB) as resp:
             data = json.loads(resp.read().decode())
 
         if data.get('results'):

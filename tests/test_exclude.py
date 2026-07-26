@@ -3,7 +3,9 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from sator.exclude import is_excluded, _DEFAULT_EXCLUDES
+from sator.exclude import is_excluded
+from sator import settings as _settings
+_DEFAULT_EXCLUDES = _settings.DEFAULT_EXCLUDES
 
 
 def test_default_excludes_loaded():
