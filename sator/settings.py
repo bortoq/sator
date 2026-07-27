@@ -18,8 +18,8 @@ DEFAULT_TRACKERS = ['nyaa', 'tpb', 'yourbittorrent', 'torrentfunk', 'magnetz', '
 
 # ── Scoring heuristics (process.py) ───────────────────────────────────────
 PREFERRED_RES = 1080
-SEEDER_CAP = 100
-SIZE_FLOOR_GB = 0.1
+SEEDER_CAP = 100  # max seeders for scoring; beyond this gives no advantage
+SIZE_FLOOR_GB = 0.1  # minimum file size for scoring; avoids division by zero
 EFFICIENCY_WEIGHT = 0.1
 EXACT_RES_BONUS = 30
 CLOSE_RES_BONUS = 15
@@ -120,7 +120,7 @@ RES_HD = 720
 RES_SD = 480
 
 # ── Fallback (best-mode) ─────────────────────────────────────────────────
-FALLBACK_PENALTY = 500       # subtracted from score of filtered-out items
+FALLBACK_PENALTY = 500       # subtracted from score of filtered-out items so any
                              # so any passing item beats any fallback
 
 # ── Series / episode expansion ──────────────────────────────────────────────

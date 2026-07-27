@@ -184,10 +184,15 @@ def compute_new_name(
     }
 
     # Choose template
-    if is_series:
-        new_name = template_series.format(**metadata)
-    else:
-        new_name = template_movie.format(**metadata)
+    try:
+        if is_series:
+            new_name = template_series.format(**metadata)
+        else:
+            new_name = template_movie.format(**metadata)
+    except KeyError as e:
+        print(f'  \u26a0 Unknown placeholder in template: {e}', file=__import__('sys').stderr)
+        new_name = file_name
+        metadata['error'] = f'Unknown placeholder: {e}'
 
     # Clean up: remove artifacts from empty placeholders
     # Remove empty brackets [], (), etc.
@@ -238,7 +243,7 @@ def write_sidecar(
     file_map: List[Dict[str, str]],
     template_used: str,
     metadata: dict,
-) -> str:
+) -> Optional[str]:
     """Write sidecar JSON file to disk.
 
     Args:
@@ -246,13 +251,21 @@ def write_sidecar(
         … Same as :func:`build_sidecar`.
 
     Returns:
-        Path to the written sidecar file.
+        Path to the written sidecar file, or None if save_path does not exist.
     """
+    # Verify save_path exists
+    if not os.path.isdir(save_path):
+        print(f'  \u26a0 Sidecar save path does not exist: {save_path}',
+              file=__import__('sys').stderr)
+        return None
+
     sidecar = build_sidecar(torrent_hash, torrent_name, file_map,
                             template_used, metadata)
-    filename = f'{torrent_name}.orig.json'
-    # Sanitize filename (remove path separators)
-    filename = re.sub(r'[/\\:]', '_', filename)
+
+    # Sanitize torrent_name for use as filename: strip dangerous chars
+    safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', torrent_name)
+    safe_name = safe_name[:100]  # limit length
+    filename = f'{safe_name}.orig.json'
     sidecar_path = os.path.join(save_path, filename)
 
     with open(sidecar_path, 'w', encoding='utf-8') as f:

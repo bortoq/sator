@@ -26,25 +26,42 @@ _EPISODE_CACHE_PATH = os.path.join(
     os.path.expanduser(settings.CACHE_DIR), 'episodes.json'
 )
 
+# TTL in seconds: cache entries older than this are discarded
+CACHE_TTL = 7 * 24 * 3600  # 7 days
+
 def _load_episode_cache() -> dict:
-    """Load episode title cache from disk."""
+    """Load episode title cache from disk, discarding entries older than CACHE_TTL."""
+    import time
     try:
         with open(_EPISODE_CACHE_PATH) as f:
             raw = json.load(f)
-        # Convert string keys back to int (JSON serializes dict keys as strings)
+        now = time.time()
         result = {}
         for show_key, episodes in raw.items():
-            result[show_key] = {int(k): v for k, v in episodes.items()}
+            # Check timestamp
+            ts = episodes.get('_cached_at', 0)
+            if now - ts > CACHE_TTL:
+                continue
+            titles = episodes.get('titles', {})
+            if not titles:
+                continue
+            result[show_key] = {int(k): v for k, v in titles.items()}
         return result
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         return {}
 
 def _save_episode_cache(cache: dict):
-    """Save episode title cache to disk."""
+    """Save episode title cache to disk with timestamp for TTL."""
+    import time
     try:
         os.makedirs(os.path.dirname(_EPISODE_CACHE_PATH), exist_ok=True)
+        # Wrap in timestamp format
+        now = time.time()
+        to_save = {}
+        for key, titles in cache.items():
+            to_save[key] = {'titles': titles, '_cached_at': now}
         with open(_EPISODE_CACHE_PATH, 'w') as f:
-            json.dump(cache, f, indent=2, ensure_ascii=False)
+            json.dump(to_save, f, indent=2, ensure_ascii=False)
     except OSError:
         pass
 

@@ -6,7 +6,7 @@ import tempfile
 import json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from sator.cli import _parse_sator_file
+from sator.cli_utils import _parse_sator_file
 
 
 # ── _parse_sator_file (replaces _parse_magnet_file) ─────────────────────────
@@ -119,7 +119,7 @@ def test_parse_sator_file_not_found():
     code = subprocess.call([sys.executable, '-c', '''
 import sys
 sys.path.insert(0, ".")
-from sator.cli import _parse_sator_file
+from sator.cli_utils import _parse_sator_file
 try:
     _parse_sator_file("/nonexistent/file.txt")
 except SystemExit as e:
