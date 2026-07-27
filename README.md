@@ -69,9 +69,13 @@ sator -s "Lost" -T nyaa -T yts
 
 ### Search series (expand season/episode ranges)
 
+`-sn` takes season/episode numbers (not a query). The title goes in `-s`:
+
 ```bash
-sator -sn "Breaking Bad S01"                # expands to S01E01, S01E02, …, S01E07
-sator -sn "Game of Thrones S01E01-E05"      # manual range
+sator -s "Breaking Bad" -sn 1               # → "Breaking Bad S01"
+sator -s "Breaking Bad" -sn                 # → "Breaking Bad complete seasons"
+sator -s "Game of Thrones" -sn 1 1 5        # → "Game of Thrones S01E01", "GOT S01E05"
+sator -s "Better Call Saul" -sn 1 -sn 3     # → "Better Call Saul S01" + "S03"
 ```
 
 ### Best-mode
@@ -121,8 +125,8 @@ sator -s watchlist.txt -o favorites.url -rl 1080 -l __original__ -t en
 # Find 4K HDR content with English audio and subtitles, auto-add to qBittorrent
 sator -s "Dune 2021" -rl 2160 -rb 2160 -l en -t en -a --tags "4K movies"
 
-# Search for a TV series across all trackers, show all results sorted by score
-sator -sn "Severance S02" -m
+# Search for a TV series season across all trackers, show all results sorted by score
+sator -s "Severance" -sn 2 -m
 
 # Exclude dubbed/multi-audio releases and prefer BluRay source
 sator -s "The Matrix" -e MULTi,DUAL -rl 1080
@@ -177,7 +181,7 @@ Use `-t` without a value to require subtitles matching the original language.
 | `-m`, `--more` | Show **all** filtered results instead of best-only (disable best-mode) |
 | `-o FILE` | Write output to file (suppresses magnet URIs on stderr) |
 | `-T TRACKER` | Restrict search to specific tracker(s). Repeatable. |
-| `-sn QUERY` | Series mode: expand season/episode ranges into individual queries |
+| `-sn [S] [E] ...` | Series season/episode numbers. No value = all seasons. Needs `-s` for the title |
 | `--enrich` | Enable TMDB enrichment (requires `--tmdb-key`) |
 | `--no-enrich` | Disable detail-page enrichment (lazy scrape of tracker pages) |
 | `--tmdb-key KEY` | TMDB API key |
