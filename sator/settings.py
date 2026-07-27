@@ -55,6 +55,9 @@ TIMEOUT_YTS = 15
 TIMEOUT_SOLIDTORRENTS = 15
 TIMEOUT_EZTV = 15
 TIMEOUT_TGX = 15
+TIMEOUT_MAGNETZ = 15
+TIMEOUT_GLOTORRENTS = 15
+TIMEOUT_YB_LIKE = 15               # YourBittorrent / TorrentFunk (same JSON API)
 TIMEOUT_DETAIL = 10               # detail-page enrichment
 
 # ── API timeouts (seconds) ────────────────────────────────────────────────

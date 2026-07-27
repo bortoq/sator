@@ -543,7 +543,7 @@ class MagnetzIndexer(BaseIndexer):
         url = f"https://magnetz.eu/api/magnets/search?query={sq}"
         try:
             req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
-            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_MAGNETZ)
             data = json.loads(resp.read().decode())
         except Exception:
             return []
@@ -580,7 +580,7 @@ class GloTorrentsIndexer(BaseIndexer):
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
                 'Accept': 'text/html,application/xhtml+xml',
             })
-            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_GLOTORRENTS)
             html = resp.read().decode('utf-8', errors='replace')
         except Exception:
             return []
@@ -630,7 +630,7 @@ class _YBLikeIndexer(BaseIndexer):
         url = f"{self.base_url}/api/search.json?q={sq}&limit=100"
         try:
             req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
-            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_YB_LIKE)
             data = json.loads(resp.read().decode())
         except Exception:
             return []

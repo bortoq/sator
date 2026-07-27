@@ -111,6 +111,33 @@ sator run -s "Lost" -o lost.url
 
 The `run` sub-command is the default; all flags work identically.
 
+### Real-world examples
+
+```bash
+# Batch process your watchlist: search for multiple movies, pick best per query,
+# write magnets to file for later import
+sator -s watchlist.txt -o favorites.url -rl 1080 -l __original__ -t en
+
+# Find 4K HDR content with English audio and subtitles, auto-add to qBittorrent
+sator -s "Dune 2021" -rl 2160 -rb 2160 -l en -t en -a --tags "4K movies"
+
+# Search for a TV series across all trackers, show all results sorted by score
+sator -sn "Severance S02" -m
+
+# Exclude dubbed/multi-audio releases and prefer BluRay source
+sator -s "The Matrix" -e MULTi,DUAL -rl 1080
+
+# Quick check: what's available for a query? Verbose mode shows filtered-out too
+sator -s "Interstellar 4K" -v
+
+# Nightly cron job: process a list of wanted movies, auto-add best matches,
+# adding in paused state if fallback kicks in
+sator -s /path/to/wanted.txt -a --tags "automated" -o /tmp/last_run.url
+
+# Import existing magnet links from a file into qBittorrent
+sator -a ~/Downloads/magnets.txt
+```
+
 ## Options
 
 ### Resolution bounds (each at most once)
