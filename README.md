@@ -69,13 +69,24 @@ sator -s "Lost" -T nyaa -T yts
 
 ### Search series (expand season/episode ranges)
 
-`-sn` takes season/episode numbers (not a query). The title goes in `-s`:
+`-sn` takes only season/episode **numbers** (the title goes in `-s`).
+No value = all seasons. Repeat `-sn` for multiple independent blocks.
 
 ```bash
-sator -s "Breaking Bad" -sn 1               # → "Breaking Bad S01"
-sator -s "Breaking Bad" -sn                 # → "Breaking Bad complete seasons"
-sator -s "Game of Thrones" -sn 1 1 5        # → "Game of Thrones S01E01", "GOT S01E05"
-sator -s "Better Call Saul" -sn 1 -sn 3     # → "Better Call Saul S01" + "S03"
+# All episodes of season 1
+sator -s "Breaking Bad" -sn 1
+
+# All seasons (no number given)
+sator -s "Breaking Bad" -sn
+
+# Specific episodes — just list them one by one
+sator -s "Game of Thrones" -sn 1 1 2 3 4 5
+
+# Shell brace expansion works great for ranges
+sator -s "Game of Thrones" -sn 1 $(echo {1..5})
+
+# Two separate seasons
+sator -s "Better Call Saul" -sn 1 -sn 3
 ```
 
 ### Best-mode
@@ -126,7 +137,7 @@ sator -s watchlist.txt -o favorites.url -rl 1080 -l __original__ -t en
 sator -s "Dune 2021" -rl 2160 -rb 2160 -l en -t en -a --tags "4K movies"
 
 # Search for a TV series season across all trackers, show all results sorted by score
-sator -s "Severance" -sn 2 -m
+sator -s "Severance" -sn 2 -m                                    # search one season
 
 # Exclude dubbed/multi-audio releases and prefer BluRay source
 sator -s "The Matrix" -e MULTi,DUAL -rl 1080
