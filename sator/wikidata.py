@@ -219,7 +219,7 @@ def get_season_episode_count(series_query: str, season_num: int,
     Returns episode count (int) or 0 if not found.
     '''
     # Clean query for better searching
-    cleaned = re.sub(r'[\s*S\d+E\d+\s*$', '', series_query).strip()
+    cleaned = re.sub(r'\s*S\d+(E\d+)?\s*$', '', series_query).strip()
     if not cleaned:
         cleaned = series_query
 

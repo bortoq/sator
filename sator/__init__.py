@@ -15,5 +15,5 @@ from sator.qb_client import QBClient, QBConfig, _qb_add_simple
 from sator.exclude import is_excluded
 from sator.tmdb import enrich_query
 from sator.process import _process_query_internal
-from sator.series import expand_series_queries
+from sator.series import expand_series_queries, pick_series_best, make_series_tag
 from sator.cli import cmd_run, cmd_process_query, main

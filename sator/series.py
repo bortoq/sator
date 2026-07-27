@@ -49,3 +49,55 @@ def expand_series_queries(base_query: str, season_specs: list) -> list:
                 queries.append(f'{base_query} S{int(season):02d}E{int(ep):02d}')
 
     return queries
+
+
+def pick_series_best(pack_torrents: list, episode_torrents_by_num: dict,
+                      episode_count: int) -> dict:
+    """Compare season pack vs individual episodes and pick the better option.
+
+    Args:
+        pack_torrents: List of torrent dicts from the season pack query.
+        episode_torrents_by_num: Dict of ``{ep_num: [torrent_dict, ...]}``.
+        episode_count: Expected number of episodes in the season.
+
+    Returns:
+        ``{'choice': 'pack'|'episodes'|'none', 'torrents': [...]}``
+    """
+    pack_ok = bool(pack_torrents)
+
+    # Check if all episodes are present
+    eps_ok = True
+    ep_torrents = []
+    for ep in range(1, episode_count + 1):
+        ep_res = episode_torrents_by_num.get(ep, [])
+        if not ep_res:
+            eps_ok = False
+            break
+        ep_torrents.extend(ep_res)
+
+    if not pack_ok and not eps_ok:
+        return {'choice': 'none', 'torrents': []}
+
+    if eps_ok and not pack_ok:
+        return {'choice': 'episodes', 'torrents': ep_torrents}
+
+    if not eps_ok and pack_ok:
+        return {'choice': 'pack', 'torrents': pack_torrents}
+
+    # Both available - compare by average seeders
+    pack_seeders = max((t.get('seeders', 0) for t in pack_torrents), default=0)
+    ep_seeders = sum(t.get('seeders', 0) for t in ep_torrents) // episode_count
+
+    if ep_seeders > pack_seeders:
+        return {'choice': 'episodes', 'torrents': ep_torrents}
+    return {'choice': 'pack', 'torrents': pack_torrents}
+
+
+def make_series_tag(show_name: str) -> str:
+    """Generate a qBittorrent tag for a series from the show name.
+
+    Example: 'Breaking Bad' becomes 'series:breaking-bad'
+    """
+    import re
+    clean = re.sub(r'[^a-z0-9]+', '-', show_name.strip().lower()).strip('-')
+    return f"{clean}"

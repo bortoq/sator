@@ -65,3 +65,17 @@
 - 1337x (Cloudflare 403).
 - `DEFAULTS` dict from `cli.py` (replaced by `settings.py`).
 
+
+## Unreleased
+
+### Features
+- **Episode-level expansion**: When `-sn` specifies a season (e.g. `-sn 1`), sator now:
+  - Looks up episode count from Wikidata (Wikipedia, no API key required)
+  - Generates per-episode queries: `S01E01` .. `S01E{N}`
+  - Searches both pack and individual episodes across all trackers
+  - Compares pack vs episodes: chooses the option with better seeders
+  - Auto-tags episodes with `series:{show-name}` when using `-a`
+  - Caches episode counts in `~/.cache/sator/seriess.json`
+
+### CLI
+- **`--no-episode-expansion`**: Disable automatic episode-level expansion, search pack only.

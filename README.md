@@ -89,6 +89,31 @@ sator -s "Game of Thrones" -sn 1 $(echo {1..5})
 sator -s "Better Call Saul" -sn 1 -sn 3
 ```
 
+### Episode-level expansion (automatic)
+
+When `-sn` specifies a season without individual episodes (e.g. `-sn 1`),
+sator automatically looks up the episode count from Wikidata (Wikipedia, no API key)
+and searches for **both** the season pack and individual episodes:
+
+```bash
+sator -s "Breaking Bad" -sn 1 -a
+# Searches: "Breaking Bad S01" (season pack)
+#           "Breaking Bad S01E01" ... "Breaking Bad S01E07" (7 episodes)
+# Compares: pack seeders vs average episode seeders
+# If episodes win: adds 7 torrents, each tagged "series:breaking-bad"
+# If pack wins:   adds 1 torrent
+```
+
+| Scenario | Result |
+|----------|--------|
+| Pack OK, all episodes found, ep seeders > pack seeders | **Episodes win** (auto-tagged) |
+| Pack OK, all episodes found, pack seeders >= ep seeders | **Pack wins** |
+| Pack OK, some episodes missing | **Pack wins** |
+| Pack empty, all episodes found | **Episodes win** |
+| Wikidata has no data for this series | **Pack only** (fallback, no expansion) |
+
+Disable with `--no-episode-expansion`.
+
 ### Best-mode
 
 Best-mode scores results and picks the best match per query:
@@ -195,6 +220,7 @@ Use `-t` without a value to require subtitles matching the original language.
 | `-sn [S] [E] ...` | Series season/episode numbers. No value = all seasons. Needs `-s` for the title |
 | `--enrich` | Enable TMDB enrichment (requires `--tmdb-key`) |
 | `--no-enrich` | Disable detail-page enrichment (lazy scrape of tracker pages) |
+| `--no-episode-expansion` | Disable automatic episode-level expansion (`-sn` searches pack only) |
 | `--tmdb-key KEY` | TMDB API key |
 | `-a` | Auto-add found torrents to qBittorrent |
 | `--tags TAG [TAG ...]` | Tags to apply in qBittorrent (space-separated) |

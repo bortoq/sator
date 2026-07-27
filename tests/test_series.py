@@ -11,7 +11,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from sator.series import expand_series_queries
+from sator.series import expand_series_queries, pick_series_best, make_series_tag
 
 
 # ── No flags ───────────────────────────────────────────────────────────
@@ -144,3 +144,156 @@ def test_empty_base_query():
 def test_very_large_numbers():
     """Season 999 episode 999."""
     assert expand_series_queries('Show', [['999', '999']]) == ['Show S999E999']
+
+# ── pick_series_best ────────────────────────────────────────────────────────
+
+def test_pack_wins_episodes_incomplete():
+    """If some episodes are missing, pack wins."""
+    pack = [{'seeders': 10, 'title': 'Show S01'}]
+    ep_results = {1: [{'seeders': 5, 'title': 'Show S01E01'}]}  # only ep 1 of 3
+    result = pick_series_best(pack, ep_results, 3)
+    assert result['choice'] == 'pack'
+    assert result['torrents'] == pack
+
+
+def test_episodes_win_all_found_no_pack():
+    """If pack is empty but all episodes found, episodes win."""
+    pack = []
+    ep_results = {
+        1: [{'seeders': 5, 'title': 'Show S01E01'}],
+        2: [{'seeders': 8, 'title': 'Show S01E02'}],
+    }
+    result = pick_series_best(pack, ep_results, 2)
+    assert result['choice'] == 'episodes'
+    assert len(result['torrents']) == 2
+
+
+def test_pack_wins_better_seeders():
+    """If both available and pack has more seeders, pack wins."""
+    pack = [{'seeders': 100, 'title': 'Show S01'}]
+    ep_results = {
+        1: [{'seeders': 10, 'title': 'Show S01E01'}],
+        2: [{'seeders': 10, 'title': 'Show S01E02'}],
+    }
+    result = pick_series_best(pack, ep_results, 2)
+    assert result['choice'] == 'pack'
+
+
+def test_episodes_win_better_seeders():
+    """If both available and episodes have better avg seeders, episodes win."""
+    pack = [{'seeders': 5, 'title': 'Show S01'}]
+    ep_results = {
+        1: [{'seeders': 50, 'title': 'Show S01E01'}],
+        2: [{'seeders': 60, 'title': 'Show S01E02'}],
+    }
+    result = pick_series_best(pack, ep_results, 2)
+    assert result['choice'] == 'episodes'
+    assert len(result['torrents']) == 2
+
+
+def test_none_found():
+    """If nothing found, choice is 'none'."""
+    result = pick_series_best([], {}, 5)
+    assert result['choice'] == 'none'
+    assert result['torrents'] == []
+
+
+def test_pack_wins_empty_ep_results():
+    """ep_results dict completely empty but pack exists."""
+    pack = [{'seeders': 10, 'title': 'Show S01'}]
+    result = pick_series_best(pack, {}, 3)
+    assert result['choice'] == 'pack'
+
+
+# ── make_series_tag ─────────────────────────────────────────────────────────
+
+def test_tag_simple_name():
+    """Simple show name becomes series:show-name."""
+    tag = make_series_tag('Breaking Bad')
+    assert tag == 'breaking-bad'
+
+
+def test_tag_with_year():
+    """Show name with year."""
+    tag = make_series_tag('The Wire 2002')
+    assert tag == 'the-wire-2002'
+
+
+def test_tag_special_chars():
+    """Special characters stripped."""
+    tag = make_series_tag("Stranger Things (2016)")
+    assert tag == 'stranger-things-2016'
+
+
+def test_tag_multi_word():
+    """Multi-word show."""
+    tag = make_series_tag('Better Call Saul')
+    assert tag == 'better-call-saul'
+
+# ── get_season_episode_count (mocked) ────────────────────────────────────────
+
+def test_get_season_episode_count_found(monkeypatch):
+    """Wikidata lookup succeeds for Breaking Bad season 1."""
+    import json
+    responses = iter([
+        # 1. Wikipedia search for "Breaking Bad"
+        json.dumps({'query': {'search': [{'title': 'Breaking Bad'}]}}),
+        # 2. Get Wikidata ID from Wikipedia page
+        json.dumps({'query': {'pages': {'1': {'pageprops': {'wikibase_item': 'Q1079'}}}}}),
+        # 3. Get series Wikidata entity
+        json.dumps({
+            'entities': {
+                'Q1079': {
+                    'claims': {
+                        'P527': [
+                            {'mainsnak': {'datavalue': {'value': {'id': 'Q1582890'}}}},
+                        ]
+                    }
+                }
+            }
+        }),
+        # 4. Get season 1 entity
+        json.dumps({
+            'entities': {
+                'Q1582890': {
+                    'labels': {'en': {'value': 'Breaking Bad, season 1'}},
+                    'claims': {
+                        'P31': [{'mainsnak': {'datavalue': {'value': {'id': 'Q3464665'}}}}],
+                        'P1113': [{'mainsnak': {'datavalue': {'value': {'amount': '+7', 'unit': '1'}}}}],
+                    }
+                }
+            }
+        }),
+    ])
+    
+    def mock_urlopen(req, timeout=10):
+        class MockResponse:
+            def read(self):
+                return next(responses).encode()
+        return MockResponse()
+    
+    monkeypatch.setattr('urllib.request.urlopen', mock_urlopen)
+    
+    from sator.wikidata import get_season_episode_count
+    result = get_season_episode_count('Breaking Bad', 1)
+    assert result == 7
+
+
+def test_get_season_episode_count_not_found(monkeypatch):
+    """Wikidata lookup returns 0 for unknown show."""
+    import json
+    responses = iter([
+        json.dumps({'query': {'search': []}}),  # No Wikipedia results
+    ])
+    
+    def mock_urlopen(req, timeout=10):
+        class MockResponse:
+            def read(self):
+                return next(responses).encode()
+        return MockResponse()
+    
+    monkeypatch.setattr('urllib.request.urlopen', mock_urlopen)
+    
+    from sator.wikidata import get_season_episode_count
+    result = get_season_episode_count('UnknownShowXYZ', 1)
+    assert result == 0

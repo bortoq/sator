@@ -20,7 +20,7 @@ from sator.indexer import search_all, INDEXERS
 from sator.process import _process_query_internal, TRACKER_LABELS
 from sator.qb_client import _qb_add_simple
 from sator import settings
-from sator.series import expand_series_queries
+from sator.series import expand_series_queries, pick_series_best, make_series_tag
 
 def cmd_parse_languages(args: List[str]):
     """Usage: parse-languages <title>"""
@@ -427,6 +427,8 @@ def cmd_run(args: List[str]):
                        help='Season number (repeatable, no value = all seasons)')
     parser.add_argument('--no-enrich', action='store_false', dest='enrich', default=True,
                        help='Disable TMDB enrichment')
+    parser.add_argument('--no-episode-expansion', action='store_true', default=False,
+                       help='Disable automatic episode-level expansion for -sn')
     parser.add_argument('--tmdb-key', type=str, default='',
                        help='TMDB API key (overrides config file)')
     parser.add_argument('-h', '--help', action='store_true')
@@ -467,6 +469,7 @@ Search:
   --tags TAGS               Space-separated tags
   --qb-url URL              qBittorrent WebUI URL (default: http://localhost:8090)
   --no-enrich               Disable TMDB enrichment
+  --no-episode-expansion    Disable automatic episode-level expansion
   --tmdb-key KEY            TMDB API key (overrides config)
 
 Filters (each at most once):
@@ -564,7 +567,7 @@ Filters (each at most once):
     _series_plan = {}     # spec_idx -> {pack_q, [ep_queries], ep_count}
     _series_orig = list(queries)  # save queries before episode expansion
     
-    if parsed.season_number:
+    if parsed.season_number and not getattr(parsed, 'no_episode_expansion', False):
         for spec in parsed.season_number:
             if spec and len(spec) == 1:
                 season_num = int(spec[0])
@@ -576,6 +579,12 @@ Filters (each at most once):
                         continue
                     ep_count = get_season_episode_count(clean_q, season_num, wiki_cache)
                     if not ep_count:
+                        # Wikidata lookup failed — warn user
+                        if parsed.verbose:
+                            name = clean_q or orig_q
+                            print(f'  \u26a0 [{name} S{season_num:02d}] '
+                                  f'episode count not found on Wikidata, using pack only',
+                                  file=sys.stderr)
                         continue
                     pack_q = f"{clean_q} S{season_num:02d}"
                     if pack_q not in queries:
@@ -732,28 +741,21 @@ Filters (each at most once):
             pack_ok = pack_result and pack_result.get('found_any')
             pack_torrents = pack_result.get('torrents', []) if pack_ok else []
             
-            # Evaluate episodes: all must be found
+            # Build ep_results_dict for pick_series_best
             eps_ok = True
             ep_torrents = []
+            ep_results_dict = {}
             for ep in range(1, ep_count + 1):
                 ep_res = ep_results.get(ep)
                 if not ep_res or not ep_res.get('found_any'):
                     eps_ok = False
                     break
                 ep_torrents.extend(ep_res.get('torrents', []))
+                ep_results_dict[ep] = ep_res.get('torrents', [])
             
-            # Decide winner
-            use_episodes = False
-            if eps_ok and not pack_ok:
-                use_episodes = True
-            elif eps_ok and pack_ok:
-                # Compare: episodes win if avg score higher than pack score
-                # Use seeders as a proxy when no score is available
-                pack_seeders = max((t.get('seeders', 0) for t in pack_torrents), default=0)
-                ep_seeders = sum(t.get('seeders', 0) for t in ep_torrents) // ep_count
-                # Prefer episodes if average seeders > pack seeders
-                if ep_seeders > pack_seeders:
-                    use_episodes = True
+            # Decide winner using helper
+            winner = pick_series_best(pack_torrents, ep_results_dict, ep_count)
+            use_episodes = winner['choice'] == 'episodes'
             
             if use_episodes:
                 # Episodes win
@@ -767,9 +769,8 @@ Filters (each at most once):
                             t['_episode'] = True
                 # Tag episodes in qB if auto-add
                 if auto_add and parsed.qb_url:
-                    clean_name = re.sub(r'[^a-z0-9]+', '-', 
-                        re.sub(r'\s+S\d{2}(E\d{2})?$', '', plan['pack_q']).strip().lower()).strip('-')
-                    ep_tag = f"{settings.SERIES_TAG_PREFIX}{clean_name}"
+                    clean_name = re.sub(r'\s+S\d{2}(E\d{2})?$', '', plan['pack_q']).strip()
+                    ep_tag = f"{settings.SERIES_TAG_PREFIX}{make_series_tag(clean_name)}"
                     ep_added = 0
                     for t in ep_torrents:
                         if t.get('magnet'):
