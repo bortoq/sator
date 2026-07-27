@@ -3,6 +3,7 @@
 
 import re
 from dataclasses import dataclass
+from typing import List
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # QUALITY PARSER (from Radarr QualityParser.cs)
@@ -74,6 +75,45 @@ HDR_PATTERNS = [
 REMUX_PATTERN = re.compile(r'(?:[_. \[]|\d{4}p-|\bHybrid-)(?:(BD|UHD)[-_. ]?)?Remux\b|(?:(BD|UHD)[-_. ]?)?Remux[_. ]\d{4}p', re.IGNORECASE)
 THREE_D_PATTERN = re.compile(r'\b3D\b', re.IGNORECASE)
 
+# ── Modifiers (edition / cut indicators) ──────────────────────────────────
+# Order matters: longer patterns first to avoid partial matches.
+MODIFIERS = [
+    # Multi-word modifiers (longest first)
+    ("Special Edition", re.compile(r'\bSpecial[. ]Edition\b', re.IGNORECASE)),
+    ("Collector's Edition", re.compile(r"\bCollector['´`]?s[. ]Edition\b", re.IGNORECASE)),
+    ("Alternative Cut", re.compile(r'\b(?:Alternative|Alternate)[. ]Cut\b', re.IGNORECASE)),
+    ("Director's Cut", re.compile(r"\b(?:Director['´`]?s|Directors)[. ]?Cut\b", re.IGNORECASE)),
+    ("Theatrical Cut", re.compile(r'\bTheatrical[. ]Cut\b', re.IGNORECASE)),
+    ("Extended Cut", re.compile(r'\bExtended[. ]Cut\b', re.IGNORECASE)),
+    ("Fan Edit", re.compile(r'\bFan[. ]Edit\b', re.IGNORECASE)),
+    ("Open Matte", re.compile(r'\bOpen[. ]?Matte\b', re.IGNORECASE)),
+    ("IMAX Enhanced", re.compile(r'\bIMAX[. ]Enhanced\b', re.IGNORECASE)),
+    ("Criterion Edition", re.compile(r'\bCriterion[. ]Edition\b', re.IGNORECASE)),
+    # Single-word (and short) modifiers
+    ("Extended", re.compile(r'\bExtended\b', re.IGNORECASE)),
+    ("Unrated", re.compile(r'\bUnrated\b', re.IGNORECASE)),
+    ("Uncut", re.compile(r'\bUncut\b', re.IGNORECASE)),
+    ("Remastered", re.compile(r'\bRemastered\b', re.IGNORECASE)),
+    ("Restored", re.compile(r'\bRestored\b', re.IGNORECASE)),
+    ("Theatrical", re.compile(r'\bTheatrical\b', re.IGNORECASE)),
+    ("IMAX", re.compile(r'\bIMAX\b', re.IGNORECASE)),
+    ("Internal", re.compile(r'\bINTERNAL\b', re.IGNORECASE)),
+    ("Proper", re.compile(r'\b(?:PROPER|REPACK)\b', re.IGNORECASE)),
+    ("Convert", re.compile(r'\bCONVERT\b', re.IGNORECASE)),
+    ("Upscaled", re.compile(r'\b(?:Upscaled|Upscale|UPSCALED)\b', re.IGNORECASE)),
+    ("Hybrid", re.compile(r'\bHybrid\b', re.IGNORECASE)),
+    ("DC", re.compile(r'\bDC\b', re.IGNORECASE)),  # Director's Cut abbreviation
+    ("SE", re.compile(r'\bSE\b', re.IGNORECASE)),  # Special Edition
+    ("CE", re.compile(r'\bCE\b', re.IGNORECASE)),  # Collector's Edition
+    ("OM", re.compile(r'\bOM\b', re.IGNORECASE)),  # Open Matte
+    ("INT", re.compile(r'\bINT\b', re.IGNORECASE)),  # Internal
+]
+
+# Build a combined pattern for stripping modifiers from title text
+_MODIFIER_ALTERNATION = '|'.join(f'(?:{pat.pattern})' for _, pat in MODIFIERS)
+MODIFIER_STRIP_PATTERN = re.compile(rf'\b(?:{_MODIFIER_ALTERNATION})\b', re.IGNORECASE)
+
+
 @dataclass
 class QualityInfo:
     resolution: int = 0
@@ -84,6 +124,12 @@ class QualityInfo:
     is_remux: bool = False
     is_3d: bool = False
     quality_label: str = "Unknown"
+    modifiers: List[str] = None  # will default to empty list
+
+    def __post_init__(self):
+        if self.modifiers is None:
+            self.modifiers = []
+
 
 def parse_quality(title: str) -> QualityInfo:
     """Parse quality information from a torrent/release title."""
@@ -127,9 +173,16 @@ def parse_quality(title: str) -> QualityInfo:
     # 3D
     qi.is_3d = bool(THREE_D_PATTERN.search(normalized))
 
+    # Modifiers — collect all matching modifiers
+    for mod_name, pat in MODIFIERS:
+        if pat.search(normalized):
+            if mod_name not in qi.modifiers:
+                qi.modifiers.append(mod_name)
+
     # Quality label
     qi.quality_label = _make_quality_label(qi)
     return qi
+
 
 def _make_quality_label(qi: QualityInfo) -> str:
     """Generate a human-readable quality label."""
@@ -148,5 +201,11 @@ def _make_quality_label(qi: QualityInfo) -> str:
         parts.append(qi.audio)
     if qi.is_3d:
         parts.append("3D")
+    if qi.modifiers:
+        parts.append("/".join(qi.modifiers))
     return " ".join(parts) if parts else "Unknown"
 
+
+def strip_modifiers(title: str) -> str:
+    """Remove modifier tokens from a title string (for clean name generation)."""
+    return MODIFIER_STRIP_PATTERN.sub('', title).strip()

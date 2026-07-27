@@ -125,3 +125,18 @@ FALLBACK_PENALTY = 500       # subtracted from score of filtered-out items
 
 # ── Series / episode expansion ──────────────────────────────────────────────
 SERIES_TAG_PREFIX = 'series:'   # tag prefix for episode-level auto-add results
+
+# ── Normalize / rename templates ─────────────────────────────────────────────
+# These are Python format-strings. Available placeholders:
+#   Movie : {title} {year} {quality} {resolution} {source} {codec} {audio} {hdr}
+#   Series: {show} {season:02d} {episode:02d} {title} (episode name) {quality}
+#           {resolution} {source} {codec} {audio} {hdr} {group} {mod} {ext}
+#   Note: {title} is the episode title for series, movie name for movies.
+TEMPLATE_MOVIE = '{title} ({year}) {mod}.{ext}'
+TEMPLATE_SERIES = '{season:02d}.{episode:02d}. {title}.{ext}'
+
+# Normalize is opt-in (use -n flag) — this default is unused, kept for config
+NORMALIZE_ENABLED = False
+
+# Sidecar file: when normalizing, write original names to a .orig.json file
+SIDECAR_ENABLED = True

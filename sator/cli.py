@@ -7,7 +7,7 @@ import os
 import re
 import sys
 import time
-from typing import List
+from typing import List, Optional
 from dataclasses import asdict
 from sator.iso_langs import iso_lookup, iso_name
 from sator.language import parse_languages
@@ -18,9 +18,33 @@ from sator.wikidata import get_wikidata_original_lang, get_season_episode_count
 from sator.filter import filter_result_json
 from sator.indexer import search_all, INDEXERS
 from sator.process import _process_query_internal, TRACKER_LABELS
-from sator.qb_client import _qb_add_simple
+from sator.qb_client import _qb_add_simple, QBClient, QBConfig
 from sator import settings
 from sator.series import expand_series_queries, pick_series_best, make_series_tag
+from sator.normalizer import compute_new_name, write_sidecar, _parse_season_episode
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+_MAGNET_HASH_RE = re.compile(r'btih:([a-fA-F0-9]+)', re.IGNORECASE)
+
+
+def _extract_info_hash(magnet: str) -> str:
+    """Extract the info_hash (btih) from a magnet URI."""
+    m = _MAGNET_HASH_RE.search(magnet)
+    return m.group(1).lower() if m else ''
+
+
+def _find_torrent_by_hash(client: QBClient, info_hash: str) -> Optional[dict]:
+    """Find a torrent in qB by info_hash (prefix match)."""
+    torrents = client.get_torrents()
+    for t in torrents:
+        t_hash = t.get('hash', '').lower()
+        if t_hash.startswith(info_hash):
+            return t
+    return None
+
+
+# ── Commands ─────────────────────────────────────────────────────────────────
 
 def cmd_parse_languages(args: List[str]):
     """Usage: parse-languages <title>"""
@@ -123,7 +147,6 @@ def cmd_wikilang(args: List[str]):
             cache_file = args[i + 1]
             query = ' '.join(args[:i] + args[i+2:])
             break
-    # If --cache not found, query is all args
     if not cache_file:
         for i, a in enumerate(args):
             if a == '--cache':
@@ -145,7 +168,6 @@ def cmd_size(args: List[str]):
         sys.exit(1)
     val = args[0]
     if '--to-bytes' in args or (val and not val.isdigit()):
-        # Human to bytes
         if val.isdigit():
             result = int(val)
         else:
@@ -155,7 +177,6 @@ def cmd_size(args: List[str]):
         else:
             print(json.dumps({"error": f"Invalid size: {val}"}))
     else:
-        # Bytes to human
         try:
             b = int(val)
             print(json.dumps({"bytes": b, "human": bytes_to_human(b)}))
@@ -164,8 +185,7 @@ def cmd_size(args: List[str]):
 
 
 def cmd_filter(args: List[str]):
-    """Usage: filter <json-result|--> --rl <res> --rb <res> --zl <bytes> --zb <bytes> --lang <code> [--lang <code>] --subs <code>
-    Use '-' as json-result to read from stdin."""
+    """Usage: filter <json-result|--> --rl <res> --rb <res> --zl <bytes> --zb <bytes> --lang <code> [--lang <code>] --subs <code>"""
     import argparse as ap
     parser = ap.ArgumentParser()
     parser.add_argument('json_input', nargs='?', default='-')
@@ -180,7 +200,6 @@ def cmd_filter(args: List[str]):
     except SystemExit as e:
         sys.exit(e.code)
 
-    # Read JSON from arg or stdin
     json_str = parsed.json_input
     if json_str == '-' or json_str is None:
         json_str = sys.stdin.read().strip()
@@ -211,8 +230,7 @@ def cmd_filter(args: List[str]):
 
 
 def cmd_search_all(args: List[str]):
-    """Usage: search-all <query>
-    Search all available trackers, return combined JSON array."""
+    """Usage: search-all <query>"""
     if len(args) < 1:
         print(json.dumps({"error": "Missing query argument"}))
         sys.exit(1)
@@ -228,10 +246,7 @@ def cmd_search_all(args: List[str]):
 
 
 def cmd_process_query(args: List[str]):
-    """CLI wrapper for _process_query_internal.
-    Usage: process-query <query> [--rl N] [--rb N] [--zl N] [--zb N]
-              [--lang L] [--subs S] [--qb-add] [--qb-url URL]
-              [--category CAT] [--tags TAGS] [-o FILE]"""
+    """CLI wrapper for _process_query_internal."""
     import argparse as _ap
     parser = _ap.ArgumentParser()
     parser.add_argument('query', nargs='+')
@@ -240,28 +255,19 @@ def cmd_process_query(args: List[str]):
     parser.add_argument('--zl', type=int, default=None)
     parser.add_argument('--zb', type=int, default=None)
     parser.add_argument('--lang', action='append', default=[])
-    parser.add_argument('--subs', nargs='?', const='__original__', default=[], action='append',
-                       help='Subtitle language (ISO 639-1 code or name)')
+    parser.add_argument('--subs', nargs='?', const='__original__', default=[], action='append')
     parser.add_argument('--qb-add', action='store_true', default=False)
     parser.add_argument('--qb-url', default=settings.DEFAULT_QB_URL)
     parser.add_argument('--category', default='')
     parser.add_argument('--tags', nargs='+', default=None)
     parser.add_argument('-o', '--output', default='')
-    parser.add_argument('-v', '--verbose', action='store_true', default=False,
-                       help='Verbose output: per-tracker details')
-    parser.add_argument('-tt', '--tracker-titles', action='store_true', default=False,
-                       help='Show tracker names at start')
-    parser.add_argument('-m', '--more', action='store_true', default=False,
-                       help='Show all filtered results instead of best one')
-    parser.add_argument('-e', '--exclude', type=str, default='',
-                       help='Exclude patterns (comma-separated, e.g. CAM,TS,SCR)')
-    parser.add_argument('-sn', '--season-number', nargs='*', default=None, action='append',
-                       help='Season number (repeatable, no value = all seasons)')
-    parser.add_argument('--no-enrich', action='store_false', dest='enrich', default=True,
-                       help='Disable TMDB enrichment')
-    parser.add_argument('--tmdb-key', type=str, default='',
-                       help='TMDB API key (overrides config file)')
-    # Normalize -help to --help
+    parser.add_argument('-v', '--verbose', action='store_true', default=False)
+    parser.add_argument('-tt', '--tracker-titles', action='store_true', default=False)
+    parser.add_argument('-m', '--more', action='store_true', default=False)
+    parser.add_argument('-e', '--exclude', type=str, default='')
+    parser.add_argument('-sn', '--season-number', nargs='*', default=None, action='append')
+    parser.add_argument('--no-enrich', action='store_false', dest='enrich', default=True)
+    parser.add_argument('--tmdb-key', type=str, default='')
     args = ['--help' if a == '-help' else a for a in args]
     try:
         parsed = parser.parse_args(args)
@@ -270,7 +276,6 @@ def cmd_process_query(args: List[str]):
 
     tags_str = ' '.join(parsed.tags) if parsed.tags else ''
     query = ' '.join(parsed.query)
-    # Series enrichment
     if parsed.season_number:
         queries = expand_series_queries(query, parsed.season_number)
     else:
@@ -298,7 +303,6 @@ def cmd_process_query(args: List[str]):
                                       show_tracker_titles=parsed.tracker_titles,
                                       best_mode=not parsed.more)
         results_list.append(out)
-    # Merge results from multiple expanded queries
     merged = {
         'found': sum(r.get('found', 0) for r in results_list),
         'added': sum(r.get('added', 0) for r in results_list),
@@ -317,32 +321,56 @@ def cmd_process_query(args: List[str]):
     print(json.dumps(merged))
 
 
+def _parse_sator_file(path: str) -> list:
+    """Parse a sator-format file and return list of dicts with magnet + metadata.
 
-def _parse_magnet_file(path: str) -> list:
-    """Extract magnet URIs from sator-format file (with # comments)."""
+    File format (sator -o output):
+        # [source] title
+        # Size: ... | quality_label | seeders: N
+        # Normalized: <normalized_file_name>
+        # Meta: {"show_name": "...", "season": N, "episode": N, ...}
+        magnet:?xt=urn:btih:...
+
+    Lines starting with ``\x23 Meta:`` contain JSON metadata for re-ingestion.
+    Lines starting with ``\x23 Normalized:`` show the computed file name (display only).
+    Plain magnet lines are also accepted (backward compat).
+    """
     if not os.path.exists(path):
         print(f'\u2716 File not found: {path}', file=sys.stderr)
         sys.exit(1)
-    magnets = []
+    entries = []
+    current_meta = {}
     with open(path) as f:
         for line in f:
             s = line.strip()
-            if not s or s.startswith('#'):
+            if not s:
                 continue
-            if s.startswith('magnet:'):
-                magnets.append(s)
+            if s.startswith('# Meta:'):
+                try:
+                    current_meta = json.loads(s[7:].strip())
+                except (json.JSONDecodeError, ValueError):
+                    current_meta = {}
+            elif s.startswith('#') or s.startswith('//'):
+                continue
+            elif s.startswith('magnet:'):
+                entry = {'magnet': s}
+                if current_meta.get('show_name'):
+                    entry['show_name'] = current_meta['show_name']
+                if current_meta.get('season'):
+                    entry['season'] = int(current_meta['season'])
+                if current_meta.get('episode'):
+                    entry['episode'] = int(current_meta['episode'])
+                if current_meta.get('normalized'):
+                    entry['normalized'] = current_meta['normalized']
+                entries.append(entry)
+                current_meta = {}
             else:
-                raise ValueError(f"Unexpected line in magnet file: {s[:80]!r}")
-    return magnets
+                raise ValueError(f"Unexpected line in sator file: {s[:80]!r}")
+    return entries
 
-
-# ── Built-in defaults ──────────────────────────────────────────────
-# DEFAULTS moved to sator/settings.py
 
 def apply_defaults(args: argparse.Namespace) -> argparse.Namespace:
-    """Fill in built-in defaults for args that were not explicitly provided.
-    CLI args always take priority over defaults."""
-    # Resolution bounds: None → default string
+    """Fill in built-in defaults for args that were not explicitly provided."""
     if args.rl is None:
         args.rl = settings.DEFAULT_RL
     if args.rb is None:
@@ -351,33 +379,21 @@ def apply_defaults(args: argparse.Namespace) -> argparse.Namespace:
         args.zl = settings.DEFAULT_ZL
     if args.zb is None:
         args.zb = settings.DEFAULT_ZB
-    
-    # Language: None (not provided) → ['__original__']
     if args.lang is None:
         args.lang = list(settings.DEFAULT_LANG)
-    
-    # Subtitles: None (not provided) → [] (no filter)
     if args.subs is None:
         args.subs = list(settings.DEFAULT_SUBS)
-    
-    # Trackers: None (not provided) → ['nyaa', 'tpb']
     if getattr(args, 'trackers', None) is None:
         args.trackers = list(settings.DEFAULT_TRACKERS)
-    
     return args
 
 
+# ── Main run command ─────────────────────────────────────────────────────────
+
 def cmd_run(args: List[str]):
-    """Main entry point: replaces the bash script entirely.
-    Usage: run <sator-args>  (same CLI as the original sator bash script)
-    
-    sator -s <query|file> -a [-rl RES] [-rb RES] [-zl SIZE] [-zb SIZE] 
-          [-l [LANG]] [-t LANG] [-o FILE] [--category CAT] [--tags TAGS]
-    """
-    # No args → show help (mimics original bash behavior)
+    """Main entry point: replaces the bash script entirely."""
     if not args:
         args = ['--help']
-    # Normalize -help to --help (argparse chokes on '-help' as '-h'+'elp')
     args = ['--help' if a == '-help' else a for a in args]
     import argparse as ap
     parser = ap.ArgumentParser(prog='sator', add_help=False)
@@ -389,11 +405,11 @@ def cmd_run(args: List[str]):
     parser.add_argument('-a', '--auto-add', nargs='?', const='__flag__', default=None,
                        help='Auto-add to qBittorrent. Optional: path to magnet file')
     
-    # Resolution filters (each at most once)
+    # Resolution filters
     parser.add_argument('-rl', type=str, default=None)
     parser.add_argument('-rb', type=str, default=None)
     
-    # Size filters (each at most once)
+    # Size filters
     parser.add_argument('-zl', type=str, default=None)
     parser.add_argument('-zb', type=str, default=None)
     
@@ -431,15 +447,16 @@ def cmd_run(args: List[str]):
                        help='Disable automatic episode-level expansion for -sn')
     parser.add_argument('--tmdb-key', type=str, default='',
                        help='TMDB API key (overrides config file)')
+    parser.add_argument('-n', '--normalize', action='store_true', default=False,
+                       help='Normalize file names in qBittorrent according to templates')
     parser.add_argument('-h', '--help', action='store_true')
-    # Help
     
     try:
         parsed = parser.parse_args(args)
     except SystemExit as e:
         sys.exit(e.code)
     
-    # Apply built-in defaults to unset args
+    # Apply built-in defaults
     parsed = apply_defaults(parsed)
     tags_str = ' '.join(parsed.tags) if parsed.tags else ''
     
@@ -454,16 +471,13 @@ Search:
   -s, --search QUERY|FILE   Search by query string or file path
   -sn [S] [E] [E] .. [E]    Season number (repeatable, no value = all seasons)
   -e, --exclude PATTERNS    Exclude patterns, comma-separated (CAM,TS,SCR...)
-  -l [LANG]                 Audio language (ISO 639-1 code or name).
-                            Without value = auto-detect original language via Wikidata
+  -l [LANG]                 Audio language (ISO 639-1 code or name)
   -t [LANG]                 Subtitle language (ISO 639-1 code or name)
-                            Without value = auto-detect original language via Wikidata
-  -a, --auto-add [FILE]     Auto-add to qBittorrent.
-                            Optional FILE = direct magnet links (no search)
+  -a, --auto-add [FILE]     Auto-add to qBittorrent
   -m, --more                Show all filtered results (default: best only)
   -o, --output FILE         Save magnet links to FILE
   -v, --verbose             Show per-tracker results during search
-  -T, --trackers TRACKERS   Trackers: nyaa tpb yts solidtorrents eztv tgx (space-separated)
+  -T, --trackers TRACKERS   Trackers: nyaa tpb yts solidtorrents eztv tgx
   -tt, --tracker-titles     Show tracker names before first search
   --category CAT            Category for added torrents
   --tags TAGS               Space-separated tags
@@ -471,12 +485,13 @@ Search:
   --no-enrich               Disable TMDB enrichment
   --no-episode-expansion    Disable automatic episode-level expansion
   --tmdb-key KEY            TMDB API key (overrides config)
+  -n, --normalize           Normalize file names in qBittorrent (opt-in)
 
 Filters (each at most once):
-  -rl RES                   Resolution upper bound, e.g. 1080p
-  -rb RES                   Resolution lower bound, e.g. 720p
-  -zl SIZE                  Size upper bound, suffixes k/m/g/t
-  -zb SIZE                  Size lower bound, suffixes k/m/g/t
+  -rl RES                   Resolution upper bound
+  -rb RES                   Resolution lower bound
+  -zl SIZE                  Size upper bound
+  -zb SIZE                  Size lower bound
 """)
         sys.exit(0)
     
@@ -486,6 +501,11 @@ Filters (each at most once):
     auto_file = ""
     if auto_add and parsed.auto_add != '__flag__':
         auto_file = parsed.auto_add
+    
+    # -n needs either -a (rename in qB) or -o (save names to file)
+    if parsed.normalize and not auto_add and not parsed.output:
+        print('  \u26a0 --normalize (-n) requires --auto-add (-a) or --output (-o); ignoring -n', file=sys.stderr)
+        parsed.normalize = False
     
     # ── Direct download mode ───────────────────────────────────────────────
     if not has_search and auto_file:
@@ -503,13 +523,23 @@ Filters (each at most once):
             print(f'\u2716 File not found: {auto_file}', file=sys.stderr)
             sys.exit(1)
         
-        magnets = _parse_magnet_file(auto_file)
+        entries = _parse_sator_file(auto_file)
         added = 0
-        for m in magnets:
-            _qb_add_simple(m, parsed.qb_url, parsed.category, tags_str)
-            added += 1
+        for entry in entries:
+            if _qb_add_simple(entry['magnet'], parsed.qb_url, parsed.category, tags_str):
+                added += 1
         
         print(f'\u2022 Added to qBittorrent: {added} links', file=sys.stderr)
+        
+        # Normalize if requested (for direct download)
+        if parsed.normalize and entries:
+            # Convert entries to the format _normalize_torrents expects
+            added_magnets = []
+            for e in entries:
+                item = {'magnet': e['magnet'], 'title': '', 'show_name': e.get('show_name', ''), 'season': e.get('season'), 'episode': e.get('episode')}
+                added_magnets.append(item)
+            _normalize_torrents(parsed, added_magnets, [], len(added_magnets))
+        
         sys.exit(0)
     
     # ── Build queries ──────────────────────────────────────────────────────
@@ -517,7 +547,6 @@ Filters (each at most once):
         
     for s in parsed.search_strings:
         if os.path.isfile(s):
-            # Argument is an existing file → read queries from it
             try:
                 with open(s) as fh:
                     for line in fh:
@@ -544,7 +573,6 @@ Filters (each at most once):
             except OSError as e:
                 print(f'\u2716 Error reading {s}: {e}', file=sys.stderr)
         else:
-            # Regular query string
             queries.append(s)
     
     # ── Series enrichment ─────────────────────────────────────────────────
@@ -554,32 +582,25 @@ Filters (each at most once):
             expanded.extend(expand_series_queries(q, parsed.season_number))
         queries = expanded
     
-    # ── Episode-level expansion ──────────────────────────────────────────────
-    # For season-only -sn specs, try to get episode count from Wikidata
-    # and generate individual episode queries alongside the pack query.
-    # Results are compared later; the better option (pack vs episodes) wins.
-    # ── Cache dir ──────────────────────────────────────────────────────────
+    # ── Episode-level expansion ────────────────────────────────────────────
     cache_dir = os.path.expanduser(settings.CACHE_DIR)
     wiki_cache = os.path.join(cache_dir, 'seriess.json')
     os.makedirs(cache_dir, exist_ok=True)
     
-    _series_meta = {}     # query -> meta dict
-    _series_plan = {}     # spec_idx -> {pack_q, [ep_queries], ep_count}
-    _series_orig = list(queries)  # save queries before episode expansion
+    _series_meta = {}
+    _series_plan = {}
+    _series_orig = list(queries)
     
     if parsed.season_number and not getattr(parsed, 'no_episode_expansion', False):
         for spec in parsed.season_number:
             if spec and len(spec) == 1:
                 season_num = int(spec[0])
-                # Find the original query (before series expansion)
                 for orig_q in _series_orig:
-                    # Reconstruct original query by stripping season suffix
                     clean_q = re.sub(r'\s+S\d{2}(E\d{2})?$', '', orig_q).strip()
                     if not clean_q or clean_q == orig_q:
                         continue
                     ep_count = get_season_episode_count(clean_q, season_num, wiki_cache)
                     if not ep_count:
-                        # Wikidata lookup failed — warn user
                         if parsed.verbose:
                             name = clean_q or orig_q
                             print(f'  \u26a0 [{name} S{season_num:02d}] '
@@ -588,7 +609,7 @@ Filters (each at most once):
                         continue
                     pack_q = f"{clean_q} S{season_num:02d}"
                     if pack_q not in queries:
-                        continue  # pack query wasn't in the expansion → skip
+                        continue
                     _series_meta[pack_q] = {'type': 'pack', 'spec_idx': season_num}
                     ep_qs = []
                     for ep in range(1, ep_count + 1):
@@ -605,17 +626,13 @@ Filters (each at most once):
             for label in TRACKER_LABELS.values():
                 print(label, file=sys.stderr)
             sys.exit(0)
-        
         print('\u2716 No search queries provided', file=sys.stderr)
         sys.exit(1)
     
-    # ── Cache dir ──────────────────────────────────────────────────────────
-    # (cache_dir already initialized above for series cache)
-    
-    # ── Wikidata language cache (separate from series cache) ──────────────
+    # ── Wikidata language cache ────────────────────────────────────────────
     lang_cache = os.path.join(cache_dir, 'wikilang.json')
     
-    # ── Wikidata language / subtitle resolution ──────────────────────────
+    # ── Wikidata language / subtitle resolution ────────────────────────────
     orig_lang_map = {}
     has_original = '__original__' in parsed.lang
     lang_filters = [l for l in parsed.lang if l != '__original__']
@@ -627,7 +644,12 @@ Filters (each at most once):
         for q in queries:
             if q in orig_lang_map:
                 continue
-            iso = get_wikidata_original_lang(q, lang_cache)
+            # Strip season/episode suffix for Wikidata lookup
+            # e.g. "rick and morty S09E04" → "rick and morty"
+            _clean_q = re.sub(r'\s+S\d{2,}(E\d{2,})?$', '', q).strip()
+            if not _clean_q:
+                _clean_q = q
+            iso = get_wikidata_original_lang(_clean_q, lang_cache)
             if iso:
                 orig_lang_map[q] = iso
                 name = iso_name(iso) or iso
@@ -659,10 +681,13 @@ Filters (each at most once):
     total_size = 0
     added_count = 0
     all_torrents = []
-    _series_pack_results = {}   # season_num -> result dict for pack query
-    _series_ep_results = {}     # season_num -> {ep_num -> result dict}
-    _series_tag_added = set()   # track which season we've tagged for auto-add
+    _series_pack_results = {}
+    _series_ep_results = {}
+    _series_tag_added = set()
     start_time = time.time()
+    
+    # Track magnets added for optional normalization
+    _added_magnets = []        # list of (magnet, show_name, season, episode, title)
     
     for i, q in enumerate(queries):
         num = i + 1
@@ -690,8 +715,9 @@ Filters (each at most once):
         if parsed.exclude: filters['excludes'] = [x.strip() for x in parsed.exclude.split(',') if x.strip()]
         if parsed.tmdb_key: filters['tmdb_key'] = parsed.tmdb_key
         filters['tmdb_enrich'] = parsed.enrich
-        # Call internal processing
-        result = _process_query_internal(q, filters, auto_add, parsed.qb_url,
+        
+        qb_add = auto_add and q not in _series_meta
+        result = _process_query_internal(q, filters, qb_add, parsed.qb_url,
                                         parsed.category, tags_str, parsed.output,
                                         verbose=parsed.verbose,
                                         show_tracker_titles=parsed.tracker_titles,
@@ -712,23 +738,47 @@ Filters (each at most once):
             f = result['found']
             print(f'  Found: {f}', file=sys.stderr)
 
-        # Redirect series sub-queries to separate tracking
         meta = _series_meta.get(q)
         if meta is not None:
             if meta['type'] == 'pack':
                 _series_pack_results[meta['spec_idx']] = result
             elif meta['type'] == 'episode':
-                # Don't add to qB yet — comparison/tagging comes later
                 result['added'] = 0
                 _series_ep_results.setdefault(meta['spec_idx'], {})[meta['ep_num']] = result
-            # Don't add to all_torrents yet — comparison comes after the loop
             continue
 
         found_count += result['found']
         added_count += result['added']
         total_size += result['total_size']
         all_torrents.extend(result.get('torrents', []))
-    
+        
+        # Attach series context to torrents for output / normalization
+        # Extract show_name from query by stripping season/episode suffix
+        _clean_q = re.sub(r'\s+S\d{2,}(E\d{2,})?$', '', q).strip()
+        _t_season = None
+        _t_episode = None
+        _sn_match = re.search(r'S(\d{2,})(?:E(\d{2,}))?$', q)
+        if _sn_match:
+            _t_season = int(_sn_match.group(1))
+            if _sn_match.group(2):
+                _t_episode = int(_sn_match.group(2))
+        for t in result.get('torrents', []):
+            t['_show_name'] = _clean_q
+            t['_season'] = _t_season
+            t['_episode'] = _t_episode
+        
+        # Track added magnets for normalization
+        if parsed.normalize and result.get('added', 0) > 0:
+            for t in result.get('torrents', []):
+                magnet = t.get('magnet', '')
+                if magnet:
+                    _added_magnets.append({
+                        'magnet': magnet,
+                        'show_name': _clean_q,
+                        'title': t.get('title', ''),
+                        'season': _t_season,
+                        'episode': _t_episode,
+                    })
     
     # ── Compare series: pack vs episodes ──────────────────────────────────
     if _series_plan:
@@ -737,11 +787,9 @@ Filters (each at most once):
             ep_results = _series_ep_results.get(season_num, {})
             ep_count = plan['ep_count']
             
-            # Evaluate pack
             pack_ok = pack_result and pack_result.get('found_any')
             pack_torrents = pack_result.get('torrents', []) if pack_ok else []
             
-            # Build ep_results_dict for pick_series_best
             eps_ok = True
             ep_torrents = []
             ep_results_dict = {}
@@ -753,12 +801,10 @@ Filters (each at most once):
                 ep_torrents.extend(ep_res.get('torrents', []))
                 ep_results_dict[ep] = ep_res.get('torrents', [])
             
-            # Decide winner using helper
             winner = pick_series_best(pack_torrents, ep_results_dict, ep_count)
             use_episodes = winner['choice'] == 'episodes'
             
             if use_episodes:
-                # Episodes win
                 for ep_res in ep_results.values():
                     if ep_res.get('found_any'):
                         found_count += ep_res['found']
@@ -767,7 +813,6 @@ Filters (each at most once):
                         all_torrents.extend(ep_res.get('torrents', []))
                         for t in ep_res.get('torrents', []):
                             t['_episode'] = True
-                # Tag episodes in qB if auto-add
                 if auto_add and parsed.qb_url:
                     clean_name = re.sub(r'\s+S\d{2}(E\d{2})?$', '', plan['pack_q']).strip()
                     ep_tag = f"{settings.SERIES_TAG_PREFIX}{make_series_tag(clean_name)}"
@@ -775,21 +820,50 @@ Filters (each at most once):
                     for t in ep_torrents:
                         if t.get('magnet'):
                             ep_tags = tags_str + ',' + ep_tag if tags_str else ep_tag
-                            _qb_add_simple(t['magnet'], parsed.qb_url,
-                                          parsed.category, ep_tags, paused=False)
-                            ep_added += 1
+                            ok = _qb_add_simple(t['magnet'], parsed.qb_url,
+                                                parsed.category, ep_tags, paused=False)
+                            if ok:
+                                ep_added += 1
+                            # Track for normalization
+                            if ok and parsed.normalize:
+                                _added_magnets.append({
+                                    'magnet': t['magnet'],
+                                    'show_name': clean_name,
+                                    'title': t.get('title', ''),
+                                    'season': season_num,
+                                    'episode': None,  # will detect from filename
+                                })
                     added_count += ep_added
-                
+
                 if not parsed.verbose:
                     print(f'  \u2192 Using {ep_count} episodes (better than season pack)', file=sys.stderr)
             else:
-                # Pack wins (or only pack available)
                 if pack_ok:
                     found_count += pack_result['found']
-                    added_count += pack_result['added']
                     total_size += pack_result['total_size']
                     all_torrents.extend(pack_result.get('torrents', []))
-    
+                    if auto_add and parsed.qb_url:
+                        clean_name = re.sub(r'\s+S\d{2}(E\d{2})?$', '', plan['pack_q']).strip()
+                        pack_added = 0
+                        for t in pack_result.get('torrents', []):
+                            if t.get('magnet'):
+                                ok = _qb_add_simple(t['magnet'], parsed.qb_url,
+                                                    parsed.category, tags_str, paused=False)
+                                if ok:
+                                    pack_added += 1
+                                # Track pack magnet for normalization
+                                if ok and parsed.normalize:
+                                    _added_magnets.append({
+                                        'magnet': t['magnet'],
+                                        'show_name': clean_name,
+                                        'title': t.get('title', ''),
+                                        'season': season_num,
+                                        'episode': None,
+                                    })
+                        added_count += pack_added
+                    else:
+                        # If not auto-adding, still count the pack's previous added (should be 0 now)
+                        added_count += pack_result['added']
     # ── Report ─────────────────────────────────────────────────────────────
     duration = int(time.time() - start_time)
     print(f'Report:', file=sys.stderr)
@@ -801,26 +875,226 @@ Filters (each at most once):
     print(f'  Time:         {duration // 60}m {duration % 60}s', file=sys.stderr)
     
     # ── Output magnets ─────────────────────────────────────────────────────
-    # To stdout (if not auto-add and no -o file)
     if not auto_add and not parsed.output:
         for t in all_torrents:
             if t.get('magnet'):
                 print(t['magnet'])
     
-    # To file (if -o specified) — always truncate/creates file,
-    # write magnets+metadata only if results exist
     if parsed.output:
         try:
             with open(parsed.output, 'w') as f:
-                for t in all_torrents:
+                for i, t in enumerate(all_torrents):
                     if not t.get('magnet'):
                         continue
+
+                    # Compute show_name, season, episode from context if available
+                    _t_show = t.get('_show_name', '')
+                    _t_season = t.get('_season')
+                    _t_episode = t.get('_episode')
+
+                    # Compute normalized name if -n
+                    _normalized = ''
+                    if parsed.normalize:
+                        try:
+                            _qi = parse_quality(t.get('title', ''))
+                            _sn, _ep = _parse_season_episode(t.get('title', ''))
+                            _show = _t_show or re.sub(r'\s+S\d{2}(E\d{2})?$', '', t.get('title', '')).strip()
+                            nm, _ = compute_new_name(
+                                t.get('title', ''),
+                                template_movie=settings.TEMPLATE_MOVIE,
+                                template_series=settings.TEMPLATE_SERIES,
+                                quality=_qi,
+                                known_season=_t_season or _sn,
+                                known_episode=_t_episode or _ep,
+                                known_show=_show,
+                                ep_title='',
+                            )
+                            _normalized = nm
+                        except Exception:
+                            _normalized = ''
+
+                    # Build metadata for re-ingestion
+                    _meta = {}
+                    if _t_show:
+                        _meta['show_name'] = _t_show
+                    if _t_season:
+                        _meta['season'] = _t_season
+                    if _t_episode:
+                        _meta['episode'] = _t_episode
+                    if _normalized:
+                        _meta['normalized'] = _normalized
+                    _meta_str = json.dumps(_meta, ensure_ascii=False) if _meta else ''
+
                     f.write(f"# [{t.get('source', '?')}] {t.get('title', '')}\n")
                     f.write(f"# Size: {t.get('size_h', '?')} | {t.get('quality_label', '')} | seeders: {t.get('seeders', 0)}\n")
+                    if _normalized:
+                        f.write(f"# Normalized: {_normalized}\n")
+                    if _meta_str:
+                        f.write(f"# Meta: {_meta_str}\n")
                     f.write(f"{t['magnet']}\n\n")
         except OSError as e:
             print(f'\u2716 Failed to write {parsed.output}: {e}', file=sys.stderr)
             sys.exit(1)
+    
+    # ── Normalize file names in qBittorrent ────────────────────────────────
+    if parsed.normalize and _added_magnets:
+        _normalize_torrents(parsed, _added_magnets, all_torrents, added_count)
+
+
+# ── Normalization logic ──────────────────────────────────────────────────────
+
+def _normalize_torrents(
+    parsed: argparse.Namespace,
+    added_magnets: list,
+    all_torrents: list,
+    added_count: int,
+):
+    """After adding torrents to qB, rename files according to templates.
+
+    For series with ``-sn``, attempts to fetch episode titles from TMDB
+    to fill the ``{ep_title}`` placeholder in the template.
+    """
+    from sator.normalizer import compute_new_name, write_sidecar
+    from sator.tmdb import get_season_episode_titles, _load_tmdb_key
+
+    if not added_magnets:
+        return
+
+    print('  • Normalizing file names...', file=sys.stderr)
+
+    # Resolve TMDB key
+    tmdb_key = (parsed.tmdb_key or '') or _load_tmdb_key()
+
+    # Build QBClient
+    config = QBConfig(url=parsed.qb_url)
+    client = QBClient(config)
+
+    # Determine template
+    is_series = bool(parsed.season_number)
+    template = settings.TEMPLATE_SERIES if is_series else settings.TEMPLATE_MOVIE
+
+    # ── Pre-fetch episode titles from TMDB ──────────────────────────────────
+    # Group magnets by (show_name, season) to avoid duplicate API calls
+    _ep_titles_cache = {}  # (show_name, season) -> {1: "Pilot", ...}
+    if is_series and tmdb_key:
+        seen_pairs = set()
+        for item in added_magnets:
+            show_name = item.get('show_name', '')
+            season = item.get('season')
+            if show_name and season and (show_name, season) not in seen_pairs:
+                seen_pairs.add((show_name, season))
+                titles = get_season_episode_titles(show_name, season, tmdb_key)
+                if titles:
+                    _ep_titles_cache[(show_name, season)] = titles
+                    if parsed.verbose:
+                        count = len(titles)
+                        print(f'  • TMDB: {show_name} S{season:02d} '
+                              f'({count} episode titles)', file=sys.stderr)
+
+    renamed_count = 0
+    error_count = 0
+
+    for item in added_magnets:
+        magnet = item['magnet']
+        info_hash = _extract_info_hash(magnet)
+        if not info_hash:
+            continue
+
+        # Find torrent in qB
+        torrent = _find_torrent_by_hash(client, info_hash)
+        if not torrent:
+            continue
+
+        torrent_hash = torrent['hash']
+        torrent_name = torrent.get('name', '')
+        save_path = torrent.get('save_path', '')
+
+        # Get files
+        files = client.get_torrent_files(torrent_hash)
+        if not files:
+            continue
+
+        # Get per-torrent context
+        show_name = item.get('show_name', torrent_name)
+        known_season = item.get('season')
+        known_episode = item.get('episode')
+
+        # Look up episode titles for this show/season
+        ep_titles = _ep_titles_cache.get((show_name, known_season), {})
+
+        # Rename each file
+        sidecar_files = []
+        metadata = {}
+        template_used = template
+
+        for f in files:
+            old_name = f.get('name', '')
+            if not old_name:
+                continue
+
+            # Detect episode number from file name (or use known)
+            _, file_ep = _parse_season_episode(old_name)
+            ep_num = file_ep or known_episode
+
+            # Look up episode title
+            ep_title = ep_titles.get(ep_num, '') if ep_num else ''
+
+            new_name, meta = compute_new_name(
+                old_name,
+                template_movie=settings.TEMPLATE_MOVIE,
+                template_series=settings.TEMPLATE_SERIES,
+                quality=None,
+                known_season=known_season,
+                known_episode=ep_num,
+                known_show=show_name,
+                ep_title=ep_title,
+            )
+
+            # Fallback: if we had a season from context but file didn't have episode
+            if known_episode is not None and file_ep is None:
+                meta['episode'] = known_episode
+                new_name, meta = compute_new_name(
+                    old_name,
+                    template_movie=settings.TEMPLATE_MOVIE,
+                    template_series=settings.TEMPLATE_SERIES,
+                    quality=None,
+                    known_season=known_season,
+                    known_episode=known_episode,
+                    known_show=show_name,
+                    ep_title=ep_title,
+                )
+
+            if new_name == old_name:
+                continue
+
+            # Rename via API
+            try:
+                result = client.rename_file(torrent_hash, old_name, new_name)
+                if isinstance(result, dict) and result.get('error'):
+                    if parsed.verbose:
+                        print(f'    ✗ rename error: {result["error"]}', file=sys.stderr)
+                    error_count += 1
+                else:
+                    renamed_count += 1
+                    sidecar_files.append({'original': old_name, 'renamed': new_name})
+                    metadata = meta
+                    template_used = template
+            except Exception as e:
+                if parsed.verbose:
+                    print(f'    ✗ rename exception: {e}', file=sys.stderr)
+
+        # Write sidecar
+        if sidecar_files and save_path:
+            try:
+                write_sidecar(
+                    save_path, torrent_hash, torrent_name,
+                    sidecar_files, template_used, metadata,
+                )
+            except OSError as e:
+                if parsed.verbose:
+                    print(f'    ⚠ Sidecar write error: {e}', file=sys.stderr)
+
+    print(f'  • Renamed: {renamed_count} files  (errors: {error_count})', file=sys.stderr)
 
 
 def main():
@@ -830,8 +1104,8 @@ def main():
         print('', file=sys.stderr)
         sys.exit(130)
 
+
 def _main():
-    # If first arg is a flag or no args, dispatch to run (the full CLI workflow)
     if len(sys.argv) < 2:
         cmd_run(['--help'])
         return
@@ -839,7 +1113,7 @@ def _main():
     if sys.argv[1] in ('-h', '--help'):
         cmd_run(['--help'])
         return
-    
+
     if sys.argv[1] == 'help':
         cmd_run(['--help'])
         return
@@ -847,7 +1121,6 @@ def _main():
     command = sys.argv[1]
     cmd_args = sys.argv[2:]
 
-    # If it looks like a flag (starts with -), dispatch to run
     if command.startswith('-'):
         cmd_run(sys.argv[1:])
         return

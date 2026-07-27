@@ -107,7 +107,7 @@ def _make_progress_cb(query_num: int, total_queries: int, query: str,
             if status == 'requesting':
                 ch = '?'
             elif status == 'ok':
-                ch = 'o' if count > 0 else '.'
+                ch = '+' if count > 0 else '-'
                 tracker_results[name] = count
             elif status == 'error':
                 ch = '!'
@@ -330,16 +330,13 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             out['display_lines'].append(f"    {best['magnet']}")
         
         # Add best torrent to qB
-        out['added'] = 0
-        if qb_add and best.get('magnet'):
-            _qb_add_simple(best['magnet'], qb_url, category, tags)
-            out['added'] = 1
+        out['added'] = 1 if (qb_add and best.get('magnet') and
+                            _qb_add_simple(best['magnet'], qb_url, category, tags)) else 0
     
     # ── NOT best-mode: add all filtered to qB ──
     if not best_mode and qb_add:
         for t in out['torrents']:
-            if t.get('magnet'):
-                _qb_add_simple(t['magnet'], qb_url, category, tags)
+            if t.get('magnet') and _qb_add_simple(t['magnet'], qb_url, category, tags):
                 out['added'] += 1
     
         
@@ -379,10 +376,8 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             if magnet and not output_file:
                 out['display_lines'].append(f"    {magnet}")
             
-            out['added'] = 0
-            if qb_add and magnet:
-                _qb_add_simple(magnet, qb_url, category, tags, paused=True)
-                out['added'] = 1
+            out['added'] = 1 if (qb_add and magnet and
+                                  _qb_add_simple(magnet, qb_url, category, tags, paused=True)) else 0
             
             if source:
                 best_src = source
@@ -423,8 +418,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             out['added'] = 0
             if qb_add:
                 for t in fb_list:
-                    if t.get('magnet'):
-                        _qb_add_simple(t['magnet'], qb_url, category, tags, paused=True)
+                    if t.get('magnet') and _qb_add_simple(t['magnet'], qb_url, category, tags, paused=True):
                         out['added'] += 1
     
     # best_src is captured during the filter loop
@@ -440,14 +434,14 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         passed = raw - filt
         if passed > 0:
             if name == best_src:
-                status_chars[i] = 'O'
+                status_chars[i] = '*'
             else:
-                status_chars[i] = 'o'
+                status_chars[i] = '+'
         elif raw > 0:
-            status_chars[i] = ':'  # all filtered
+            status_chars[i] = 'x'  # all filtered
         elif current == '?':
             # Tracker had no results but no error either
-            status_chars[i] = ':'
+            status_chars[i] = 'x'
     
     # Print final line
     if not verbose:

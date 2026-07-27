@@ -79,3 +79,60 @@
 
 ### CLI
 - **`--no-episode-expansion`**: Disable automatic episode-level expansion, search pack only.
+- **`-n` / `--normalize`**: Opt-in file name normalisation for torrents added to qBittorrent.
+  Renames files according to configurable templates (separate for movies and series) and
+  writes a sidecar `{torrent}.orig.json` mapping original → new names.
+
+### Quality Parser
+- **Modifier detection**: Extended, Director's Cut, Unrated, Remastered, IMAX, Proper, Internal,
+  and 20+ other edition/cut indicators are now parsed from release titles and exposed in
+  `QualityInfo.modifiers`.
+
+### Settings
+- **`TEMPLATE_MOVIE`**: Default `'{title} ({year}) [{quality}] [{group}].{ext}'`
+- **`TEMPLATE_SERIES`**: Default `'{show} - S{season:02d}E{episode:02d} [{quality}].{ext}'`
+- Available placeholders: `{title}`, `{show}`, `{year}`, `{season}`, `{episode}`,
+  `{quality}`, `{resolution}`, `{source}`, `{codec}`, `{audio}`, `{hdr}`,
+  `{group}`, `{mod}`, `{ext}`.
+
+### TMDB
+- **`get_season_episode_titles()`**: Fetch episode names from TMDB for a given
+  show + season. Used when ``-n`` normalizes series files — ``{ep_title}``
+  placeholder is populated with the real episode name.
+- **`get_tv_show_id()`**: Search TMDB for a TV show, return its TMDB ID.
+- **Disk cache**: Episode titles cached in ``~/.cache/sator/episodes.json``
+  to avoid redundant API calls.
+- **Key sources** (in order): ``--tmdb-key KEY`` > ``tmdb_key`` in config file
+  (``~/.config/sator/config``). Register at https://www.themoviedb.org/settings/api.
+
+### Normalize + TMDB integration
+- When ``-n`` + ``-sn``, sator pre-fetches episode titles from TMDB and passes
+  ``{ep_title}`` into the series template. Titles are matched by episode number
+  extracted from each file name (or from the ``-sn`` context).
+
+### Internal
+- **`sator/normalizer.py`**: New module with `compute_new_name()`, `write_sidecar()`,
+  `build_sidecar()`, `_clean_show_name()`, `_parse_season_episode()`.
+- **QBClient.rename_file()**: Rename a single file in an existing torrent.
+- **QBClient.get_torrent_files()**: List files for a given torrent hash.
+- **QBClient.rename_folder()**: Rename a folder inside a torrent.
+
+
+### Fixed
+
+- **`_qb_add_simple` no longer swallows errors**: returns `bool`, logs exception to stderr.
+- **process.py counters now accurate**: `added` is only incremented when `_qb_add_simple` returns `True`.
+- **cli.py episode-expansion no longer adds to qB prematurely**: pack and episode queries skip qB-add
+  during the search loop; addition happens only after `pick_series_best()` decides the winner.
+- **cli.py pack-win branch now adds to qB**: previously the pack was only counted, never sent to qB
+  (it was added prematurely inside `_process_query_internal` before the fix).
+- **cli.py episode-win branch no longer double-adds**: each episode magnet is sent to qB exactly once,
+  with return-value check.
+- **cli.py direct-download mode** (`-a file`): checks `_qb_add_simple` return before incrementing counter.
+- **Normalization tracking** now conditional on successful qB add.
+
+### Tests
+- **14 new tests** for modifier parsing (`test_quality_modifiers.py`).
+- **18 new tests** for normalizer (`test_normalizer.py`).
+- **7 new tests** for TMDB episode titles (`test_tmdb_episodes.py`).
+- Total: 147 tests (all passing).

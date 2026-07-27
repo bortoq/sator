@@ -90,7 +90,53 @@ class QBClient:
             data['tags'] = tags.replace(' ', ',')
         if sort:
             data['sort'] = sort
-        return self._api_call('GET', 'torrents/info', data) or []
+        result = self._api_call('GET', 'torrents/info', data)
+        return result if isinstance(result, list) else []
+
+    def get_torrent_files(self, torrent_hash: str) -> List[dict]:
+        """Get file list for a torrent by hash.
+
+        Returns list of dicts with keys: index, name, size, progress, priority, etc.
+        """
+        data = {'hash': torrent_hash}
+        result = self._api_call('GET', 'torrents/files', data)
+        return result if isinstance(result, list) else []
+
+    def rename_file(self, torrent_hash: str, old_path: str, new_path: str) -> dict:
+        """Rename a single file inside a torrent.
+
+        Args:
+            torrent_hash: qBittorrent torrent hash.
+            old_path: Current file path (relative to torrent root).
+            new_path: New file path (relative to torrent root).
+
+        Returns:
+            Response dict (empty on success).
+        """
+        data = {
+            'hash': torrent_hash,
+            'oldPath': old_path,
+            'newPath': new_path,
+        }
+        return self._api_call('POST', 'torrents/renameFile', data) or {}
+
+    def rename_folder(self, torrent_hash: str, old_path: str, new_path: str) -> dict:
+        """Rename a folder inside a torrent.
+
+        Args:
+            torrent_hash: qBittorrent torrent hash.
+            old_path: Current folder path (relative to torrent root).
+            new_path: New folder path (relative to torrent root).
+
+        Returns:
+            Response dict (empty on success).
+        """
+        data = {
+            'hash': torrent_hash,
+            'oldPath': old_path,
+            'newPath': new_path,
+        }
+        return self._api_call('POST', 'torrents/renameFolder', data) or {}
 
     def set_category(self, hash: str, category: str) -> dict:
         """Set category for a torrent."""
@@ -113,7 +159,7 @@ class QBClient:
         return self._api_call('POST', 'torrents/setShareLimits', data) or {}
 
 
-def _qb_add_simple(magnet: str, qb_url: str, category: str = '', tags: str = '', paused: bool = False):
+def _qb_add_simple(magnet: str, qb_url: str, category: str = '', tags: str = '', paused: bool = False) -> bool:
     """Simple qBittorrent add for direct download mode.
 
     Args:
@@ -122,9 +168,13 @@ def _qb_add_simple(magnet: str, qb_url: str, category: str = '', tags: str = '',
         category: Optional category label.
         tags: Optional space-separated tags.
         paused: If True, add the torrent in paused state (no download starts).
+
+    Returns:
+        True if the request was sent successfully, False on error.
     """
     from urllib.request import Request, urlopen
     from urllib.parse import urlencode
+    import sys
     try:
         data = urlencode({'urls': magnet})
         if category:
@@ -137,6 +187,7 @@ def _qb_add_simple(magnet: str, qb_url: str, category: str = '', tags: str = '',
                      data=data.encode(),
                      headers={'User-Agent': settings.UA_SATOR})
         urlopen(req, timeout=settings.TIMEOUT_QB_SIMPLE)
-    except Exception:
-        pass
-
+        return True
+    except Exception as e:
+        print(f'  ⚠ qB add error: {e}', file=sys.stderr)
+        return False
