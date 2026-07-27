@@ -381,7 +381,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             
             out['added'] = 0
             if qb_add and magnet:
-                _qb_add_simple(magnet, qb_url, category, tags)
+                _qb_add_simple(magnet, qb_url, category, tags, paused=True)
                 out['added'] = 1
             
             if source:
@@ -424,7 +424,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             if qb_add:
                 for t in fb_list:
                     if t.get('magnet'):
-                        _qb_add_simple(t['magnet'], qb_url, category, tags)
+                        _qb_add_simple(t['magnet'], qb_url, category, tags, paused=True)
                         out['added'] += 1
     
     # best_src is captured during the filter loop

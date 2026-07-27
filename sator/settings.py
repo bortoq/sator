@@ -5,7 +5,7 @@ business-logic code.  Import individual names or the module as a whole.
 """
 
 # ── Package ────────────────────────────────────────────────────────────────
-__version__ = '0.3'
+__version__ = '0.4.0'
 
 # ── CLI defaults (filter bounds etc.) ──────────────────────────────────────
 DEFAULT_RB = '0'          # resolution lower bound  (0 = disabled)

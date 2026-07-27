@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tracker indexers: Nyaa, TPB, LimeTorrents, YTS, SolidTorrents, EZTV, TGx."""
+"""Tracker indexers: Nyaa, TPB, LimeTorrents, YTS, SolidTorrents, EZTV, TGx, YourBittorrent, TorrentFunk, Magnetz, GloTorrents."""
 
 import html as htmlmod
 import json
@@ -40,7 +40,7 @@ class NyaaIndexer(BaseIndexer):
         url = f"https://nyaa.si/?q={sq}&f=0&c=0_0"
         req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
         try:
-            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_NYAA)
             html = resp.read().decode('utf-8', errors='replace')
         except Exception:
             return []
@@ -388,7 +388,7 @@ class TGxIndexer(BaseIndexer):
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
             })
-            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_TGX)
             html = resp.read().decode('utf-8', errors='replace')
         except Exception:
             return []
@@ -543,7 +543,7 @@ class MagnetzIndexer(BaseIndexer):
         url = f"https://magnetz.eu/api/magnets/search?query={sq}"
         try:
             req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
-            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_NYAA)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
             data = json.loads(resp.read().decode())
         except Exception:
             return []
@@ -580,7 +580,7 @@ class GloTorrentsIndexer(BaseIndexer):
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
                 'Accept': 'text/html,application/xhtml+xml',
             })
-            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_NYAA)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
             html = resp.read().decode('utf-8', errors='replace')
         except Exception:
             return []
@@ -630,7 +630,7 @@ class _YBLikeIndexer(BaseIndexer):
         url = f"{self.base_url}/api/search.json?q={sq}&limit=100"
         try:
             req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
-            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_NYAA)
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
             data = json.loads(resp.read().decode())
         except Exception:
             return []

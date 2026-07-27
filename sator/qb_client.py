@@ -113,8 +113,16 @@ class QBClient:
         return self._api_call('POST', 'torrents/setShareLimits', data) or {}
 
 
-def _qb_add_simple(magnet: str, qb_url: str, category: str = '', tags: str = ''):
-    """Simple qBittorrent add for direct download mode."""
+def _qb_add_simple(magnet: str, qb_url: str, category: str = '', tags: str = '', paused: bool = False):
+    """Simple qBittorrent add for direct download mode.
+
+    Args:
+        magnet: Magnet link to add.
+        qb_url: Base URL of qBittorrent WebUI.
+        category: Optional category label.
+        tags: Optional space-separated tags.
+        paused: If True, add the torrent in paused state (no download starts).
+    """
     from urllib.request import Request, urlopen
     from urllib.parse import urlencode
     try:
@@ -123,6 +131,8 @@ def _qb_add_simple(magnet: str, qb_url: str, category: str = '', tags: str = '')
             data += '&' + urlencode({'category': category})
         if tags:
             data += '&' + urlencode({'tags': tags.replace(' ', ',')})
+        if paused:
+            data += '&paused=true'
         req = Request(f'{qb_url.rstrip("/")}/api/v2/torrents/add',
                      data=data.encode(),
                      headers={'User-Agent': settings.UA_SATOR})
