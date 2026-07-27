@@ -14,7 +14,7 @@ from sator.language import parse_languages
 from sator.quality import parse_quality
 from sator.title import parse_title
 from sator.size import parse_size, bytes_to_human
-from sator.wikidata import get_wikidata_original_lang
+from sator.wikidata import get_wikidata_original_lang, get_season_episode_count
 from sator.filter import filter_result_json
 from sator.indexer import search_all, INDEXERS
 from sator.process import _process_query_internal, TRACKER_LABELS
@@ -551,6 +551,46 @@ Filters (each at most once):
             expanded.extend(expand_series_queries(q, parsed.season_number))
         queries = expanded
     
+    # ── Episode-level expansion ──────────────────────────────────────────────
+    # For season-only -sn specs, try to get episode count from Wikidata
+    # and generate individual episode queries alongside the pack query.
+    # Results are compared later; the better option (pack vs episodes) wins.
+    # ── Cache dir ──────────────────────────────────────────────────────────
+    cache_dir = os.path.expanduser(settings.CACHE_DIR)
+    wiki_cache = os.path.join(cache_dir, 'seriess.json')
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    _series_meta = {}     # query -> meta dict
+    _series_plan = {}     # spec_idx -> {pack_q, [ep_queries], ep_count}
+    _series_orig = list(queries)  # save queries before episode expansion
+    
+    if parsed.season_number:
+        for spec in parsed.season_number:
+            if spec and len(spec) == 1:
+                season_num = int(spec[0])
+                # Find the original query (before series expansion)
+                for orig_q in _series_orig:
+                    # Reconstruct original query by stripping season suffix
+                    clean_q = re.sub(r'\s+S\d{2}(E\d{2})?$', '', orig_q).strip()
+                    if not clean_q or clean_q == orig_q:
+                        continue
+                    ep_count = get_season_episode_count(clean_q, season_num, wiki_cache)
+                    if not ep_count:
+                        continue
+                    pack_q = f"{clean_q} S{season_num:02d}"
+                    if pack_q not in queries:
+                        continue  # pack query wasn't in the expansion → skip
+                    _series_meta[pack_q] = {'type': 'pack', 'spec_idx': season_num}
+                    ep_qs = []
+                    for ep in range(1, ep_count + 1):
+                        ep_q = f"{clean_q} S{season_num:02d}E{ep:02d}"
+                        queries.append(ep_q)
+                        _series_meta[ep_q] = {'type': 'episode', 'spec_idx': season_num, 'ep_num': ep}
+                        ep_qs.append(ep_q)
+                    _series_plan[season_num] = {
+                        'pack_q': pack_q, 'ep_queries': ep_qs, 'ep_count': ep_count,
+                    }
+    
     if not queries:
         if parsed.tracker_titles:
             for label in TRACKER_LABELS.values():
@@ -561,9 +601,10 @@ Filters (each at most once):
         sys.exit(1)
     
     # ── Cache dir ──────────────────────────────────────────────────────────
-    cache_dir = os.path.expanduser(settings.CACHE_DIR)
-    wiki_cache = os.path.join(cache_dir, 'wikilang.json')
-    os.makedirs(cache_dir, exist_ok=True)
+    # (cache_dir already initialized above for series cache)
+    
+    # ── Wikidata language cache (separate from series cache) ──────────────
+    lang_cache = os.path.join(cache_dir, 'wikilang.json')
     
     # ── Wikidata language / subtitle resolution ──────────────────────────
     orig_lang_map = {}
@@ -577,7 +618,7 @@ Filters (each at most once):
         for q in queries:
             if q in orig_lang_map:
                 continue
-            iso = get_wikidata_original_lang(q, wiki_cache)
+            iso = get_wikidata_original_lang(q, lang_cache)
             if iso:
                 orig_lang_map[q] = iso
                 name = iso_name(iso) or iso
@@ -609,6 +650,9 @@ Filters (each at most once):
     total_size = 0
     added_count = 0
     all_torrents = []
+    _series_pack_results = {}   # season_num -> result dict for pack query
+    _series_ep_results = {}     # season_num -> {ep_num -> result dict}
+    _series_tag_added = set()   # track which season we've tagged for auto-add
     start_time = time.time()
     
     for i, q in enumerate(queries):
@@ -659,10 +703,91 @@ Filters (each at most once):
             f = result['found']
             print(f'  Found: {f}', file=sys.stderr)
 
+        # Redirect series sub-queries to separate tracking
+        meta = _series_meta.get(q)
+        if meta is not None:
+            if meta['type'] == 'pack':
+                _series_pack_results[meta['spec_idx']] = result
+            elif meta['type'] == 'episode':
+                # Don't add to qB yet — comparison/tagging comes later
+                result['added'] = 0
+                _series_ep_results.setdefault(meta['spec_idx'], {})[meta['ep_num']] = result
+            # Don't add to all_torrents yet — comparison comes after the loop
+            continue
+
         found_count += result['found']
         added_count += result['added']
         total_size += result['total_size']
         all_torrents.extend(result.get('torrents', []))
+    
+    
+    # ── Compare series: pack vs episodes ──────────────────────────────────
+    if _series_plan:
+        for season_num, plan in _series_plan.items():
+            pack_result = _series_pack_results.get(season_num)
+            ep_results = _series_ep_results.get(season_num, {})
+            ep_count = plan['ep_count']
+            
+            # Evaluate pack
+            pack_ok = pack_result and pack_result.get('found_any')
+            pack_torrents = pack_result.get('torrents', []) if pack_ok else []
+            
+            # Evaluate episodes: all must be found
+            eps_ok = True
+            ep_torrents = []
+            for ep in range(1, ep_count + 1):
+                ep_res = ep_results.get(ep)
+                if not ep_res or not ep_res.get('found_any'):
+                    eps_ok = False
+                    break
+                ep_torrents.extend(ep_res.get('torrents', []))
+            
+            # Decide winner
+            use_episodes = False
+            if eps_ok and not pack_ok:
+                use_episodes = True
+            elif eps_ok and pack_ok:
+                # Compare: episodes win if avg score higher than pack score
+                # Use seeders as a proxy when no score is available
+                pack_seeders = max((t.get('seeders', 0) for t in pack_torrents), default=0)
+                ep_seeders = sum(t.get('seeders', 0) for t in ep_torrents) // ep_count
+                # Prefer episodes if average seeders > pack seeders
+                if ep_seeders > pack_seeders:
+                    use_episodes = True
+            
+            if use_episodes:
+                # Episodes win
+                for ep_res in ep_results.values():
+                    if ep_res.get('found_any'):
+                        found_count += ep_res['found']
+                        added_count += ep_res['added']
+                        total_size += ep_res['total_size']
+                        all_torrents.extend(ep_res.get('torrents', []))
+                        for t in ep_res.get('torrents', []):
+                            t['_episode'] = True
+                # Tag episodes in qB if auto-add
+                if auto_add and parsed.qb_url:
+                    clean_name = re.sub(r'[^a-z0-9]+', '-', 
+                        re.sub(r'\s+S\d{2}(E\d{2})?$', '', plan['pack_q']).strip().lower()).strip('-')
+                    ep_tag = f"{settings.SERIES_TAG_PREFIX}{clean_name}"
+                    ep_added = 0
+                    for t in ep_torrents:
+                        if t.get('magnet'):
+                            ep_tags = tags_str + ',' + ep_tag if tags_str else ep_tag
+                            _qb_add_simple(t['magnet'], parsed.qb_url,
+                                          parsed.category, ep_tags, paused=False)
+                            ep_added += 1
+                    added_count += ep_added
+                
+                if not parsed.verbose:
+                    print(f'  \u2192 Using {ep_count} episodes (better than season pack)', file=sys.stderr)
+            else:
+                # Pack wins (or only pack available)
+                if pack_ok:
+                    found_count += pack_result['found']
+                    added_count += pack_result['added']
+                    total_size += pack_result['total_size']
+                    all_torrents.extend(pack_result.get('torrents', []))
     
     # ── Report ─────────────────────────────────────────────────────────────
     duration = int(time.time() - start_time)

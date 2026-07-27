@@ -165,3 +165,170 @@ def get_wikidata_original_lang(query: str, cache_file: str = "") -> str:
     except Exception:
         return ""
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SERIES / SEASON EPISODE COUNT LOOKUP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _wp_search(query: str, srlimit: int = 5) -> list:
+    '''Search Wikipedia and return list of page titles.'''
+    params = urllib.parse.urlencode({
+        'action': 'query', 'list': 'search',
+        'srsearch': query, 'format': 'json', 'srlimit': srlimit
+    })
+    req = urllib.request.Request(
+        f'https://en.wikipedia.org/w/api.php?{params}',
+        headers={'User-Agent': settings.UA_SATOR}
+    )
+    resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
+    return [p['title'] for p in resp.get('query', {}).get('search', [])]
+
+
+def _get_wikidata_id(wp_title: str) -> str:
+    '''Get Wikidata Q-ID from a Wikipedia page title.'''
+    params = urllib.parse.urlencode({
+        'action': 'query', 'prop': 'pageprops',
+        'titles': wp_title, 'format': 'json'
+    })
+    req = urllib.request.Request(
+        f'https://en.wikipedia.org/w/api.php?{params}',
+        headers={'User-Agent': settings.UA_SATOR}
+    )
+    resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
+    for pid, pdata in resp.get('query', {}).get('pages', {}).items():
+        if 'pageprops' in pdata and 'wikibase_item' in pdata['pageprops']:
+            return pdata['pageprops']['wikibase_item']
+    return ''
+
+
+def _get_wikidata_entity(eid: str) -> dict:
+    '''Get full Wikidata entity data.'''
+    req = urllib.request.Request(
+        f'https://www.wikidata.org/wiki/Special:EntityData/{eid}.json',
+        headers={'User-Agent': settings.UA_SATOR}
+    )
+    resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
+    return resp.get('entities', {}).get(eid, {})
+
+
+def get_season_episode_count(series_query: str, season_num: int,
+                              cache_file: str = "") -> int:
+    '''Get the number of episodes in a given TV season via Wikipedia/Wikidata.
+
+    Returns episode count (int) or 0 if not found.
+    '''
+    # Clean query for better searching
+    cleaned = re.sub(r'[\s*S\d+E\d+\s*$', '', series_query).strip()
+    if not cleaned:
+        cleaned = series_query
+
+    # Check cache
+    cache_key = f'season:{cleaned}:{season_num}'
+    if cache_file and os.path.exists(cache_file):
+        try:
+            with open(cache_file) as f:
+                cache = json.load(f)
+            if cache_key in cache:
+                return cache[cache_key]
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    try:
+        # 1. Search Wikipedia — try multiple query variants
+        queries_to_try = [
+            cleaned,
+            cleaned + ' TV series',
+            cleaned + ' (TV series)',
+        ]
+        wp_title = ''
+        for sq in queries_to_try:
+            pages = _wp_search(sq)
+            if pages:
+                # Find first page that is likely the series (skip list pages)
+                for p in pages:
+                    title_lower = p.lower()
+                    if 'list of' in title_lower:
+                        continue
+                    if 'episode' in title_lower and cleaned.lower() not in title_lower:
+                        continue
+                    wp_title = p
+                    break
+                if not wp_title and pages:
+                    wp_title = pages[0]
+                if wp_title:
+                    break
+
+        if not wp_title:
+            return 0
+
+        # 2. Get Wikidata ID
+        qid = _get_wikidata_id(wp_title)
+        if not qid:
+            return 0
+
+        # 3. Get Wikidata entity
+        entity = _get_wikidata_entity(qid)
+        claims = entity.get('claims', {})
+
+        # 4. Find season entities via P527 (has part)
+        season_qids = []
+        for claim in claims.get('P527', []):
+            val = claim.get('mainsnak', {}).get('datavalue', {})
+            pid = val.get('value', {}).get('id', '')
+            if pid:
+                season_qids.append(pid)
+
+        if not season_qids:
+            return 0
+
+        # 5. For each season entity, check if it matches our season number
+        for sid in season_qids:
+            s_entity = _get_wikidata_entity(sid)
+            s_labels = s_entity.get('labels', {})
+            s_label = s_labels.get('en', {}).get('value', '')
+            s_claims = s_entity.get('claims', {})
+
+            # Verify it's a television season (P31 = Q3464665)
+            is_season = False
+            for c in s_claims.get('P31', []):
+                val = c.get('mainsnak', {}).get('datavalue', {})
+                if val.get('value', {}).get('id') == 'Q3464665':
+                    is_season = True
+                    break
+            if not is_season:
+                continue
+
+            # Extract season number from English label ("Show, season N")
+            sn_match = re.search(r'season[,\s]*(\d+)', s_label, re.I)
+            if not sn_match:
+                continue
+            if int(sn_match.group(1)) != season_num:
+                continue
+
+            # Get episode count (P1113)
+            if 'P1113' not in s_claims:
+                continue
+            ep_amt = s_claims['P1113'][0].get('mainsnak', {}).get('datavalue', {}).get('value', {}).get('amount', '0')
+            ep_count = int(ep_amt.replace('+', ''))
+
+            # Cache result
+            if cache_file:
+                try:
+                    cache = {}
+                    if os.path.exists(cache_file):
+                        with open(cache_file) as f:
+                            cache = json.load(f)
+                    cache[cache_key] = ep_count
+                    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+                    with open(cache_file, 'w') as f:
+                        json.dump(cache, f)
+                except OSError:
+                    pass
+
+            return ep_count
+
+        return 0
+
+    except Exception:
+        return 0

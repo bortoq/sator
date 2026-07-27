@@ -122,3 +122,6 @@ RES_SD = 480
 # ── Fallback (best-mode) ─────────────────────────────────────────────────
 FALLBACK_PENALTY = 500       # subtracted from score of filtered-out items
                              # so any passing item beats any fallback
+
+# ── Series / episode expansion ──────────────────────────────────────────────
+SERIES_TAG_PREFIX = 'series:'   # tag prefix for episode-level auto-add results
