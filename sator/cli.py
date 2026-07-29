@@ -10,6 +10,7 @@ import time
 from typing import List, Optional
 from sator.size import parse_size, bytes_to_human
 from sator.wikidata import get_wikidata_original_lang
+from sator.iso_langs import iso_name
 from sator.qb_client import _qb_add_simple
 from sator import settings
 from sator.queries import _build_queries
