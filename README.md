@@ -22,6 +22,9 @@ sator -a downloads.txt                                           # add magnets f
 - **Blacklist**: built-in exclusion of CAM/TS/scrubbed releases
 - **Output file** (`-o FILE`): write magnets/URLs (suppress screen spam)
 - **Series expansion** (`-sn`): auto-expand season/episode ranges into individual queries
+- **Pack-first strategy**: only pack queries in Phase 1; episode queries (`Phase 2`) only for weak packs
+- **Concurrent search**: all trackers searched in parallel per query (ThreadPoolExecutor)
+- **Disk cache**: search results cached per (query, tracker) with 5-minute TTL for instant repeats
 - **Sub-commands**: `run`, `help`
 
 ## Install
@@ -246,6 +249,25 @@ Use `-t` without a value to require subtitles matching the original language.
 
 Default trackers (when `-T` not used): `nyaa`, `tpb`, `yourbittorrent`, `torrentfunk`, `magnetz`, `glotorrents`, `anilibria`, `rutor`.
 
+## Performance
+
+### Concurrent search
+
+All trackers are searched **in parallel** per query via `ThreadPoolExecutor`. For `-sn` series mode:
+
+1. **Phase 1** (pack-first): only season-pack queries are searched (e.g. `S01`, `S02`). If a pack has **≥10 seeders**, its episode queries are skipped entirely.
+2. **Phase 2** (weak packs): only seasons with weak packs (<10 seeders) get individual episode queries (`S01E01`, `S01E02`, …).
+
+This means for a well-seeded show you only search 1 query per season instead of 1 + N episode queries.
+
+### Disk cache
+
+Search results are cached on disk per `(query, tracker_name)` with a **5-minute TTL**. Repeat searches for the same query return instantly without network calls. The cache is stored at `~/.cache/sator/search_cache/cache.json`.
+
+### Wikidata cache
+
+Season counts and episode counts are also cached (at `~/.cache/sator/seriess.json`), so the second run of the same `-sn` query is much faster than the first.
+
 ## Detail Page Enrichment
 
 When a torrent title lacks language or subtitle metadata, sator can scrape the tracker's detail page:
@@ -301,7 +323,7 @@ cd sator
 python3 -m pytest tests/
 ```
 
-96 tests covering: CLI parsing, filter pipeline, blacklist, scoring, magnet parsing, tracker integration (mocked HTTP), detail page enrichment, Wikidata lookup, series expansion.
+303 tests covering: CLI parsing, filter pipeline, blacklist, scoring, magnet parsing, tracker integration (mocked HTTP), detail page enrichment, Wikidata lookup, series expansion.
 
 ## License
 
