@@ -49,8 +49,8 @@ DEFAULT_LANG = ['__original__']
 # Format: ISO 639-1 codes or full language names.
 DEFAULT_SUBS = []
 
-# Trackers searched (in order) when -T / --trackers is not passed.
-# Each name must match a key in sator/indexer.py TRACKERS dict.
+# Trackers used for every search, in priority order.
+# All 13 built-in indexers are always enabled (the -T flag was removed).
 # Order affects search speed -- faster trackers first reduces total wall-clock time.
 # All 13 built-in indexers:
 DEFAULT_TRACKERS = [
