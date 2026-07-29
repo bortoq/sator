@@ -137,7 +137,7 @@ def _direct_download_mode(parsed: argparse.Namespace, tags_str: str):
     for entry in entries:
         if _qb_add_simple(entry['magnet'], parsed.qb_url, parsed.category, tags_str):
             added += 1
-    print(f'\u2022 Added to qBittorrent: {added} links', file=sys.stderr)
+    print(f'Added to qBittorrent: {added} links', file=sys.stderr)
     if parsed.normalize and entries:
         added_magnets = []
         for e in entries:
@@ -220,7 +220,7 @@ Filters (each at most once):
     subs_filters = [s for s in (parsed.subs or []) if s != '__original__']
     
     if has_original or has_original_subs:
-        print('\u2022 Resolving original languages via Wikidata...', file=sys.stderr, end='', flush=True)
+        print('Resolving original languages via Wikidata...', file=sys.stderr, end='', flush=True)
         _first_lang_shown = False
         for q in queries:
             if q in orig_lang_map:

@@ -74,7 +74,7 @@ def _build_queries(parsed) -> tuple:
                     clean_q = re.sub(r'\s+complete seasons$', '', orig_q, flags=re.IGNORECASE).strip()
                     if not clean_q:
                         continue
-                    print(f'  \u2022 [{clean_q}] looking up season count...', file=sys.stderr, end='', flush=True)
+                    print(f'[{clean_q}] looking up season count...', file=sys.stderr, end='', flush=True)
                     # Try TMDB first, fall back to Wikidata
                     season_count = tmdb_get_series_season_count(clean_q, getattr(parsed, 'tmdb_key', ''))
                     if not season_count:
@@ -89,7 +89,7 @@ def _build_queries(parsed) -> tuple:
                     for sn in range(1, season_count + 1):
                         ep_count = get_season_episode_count(clean_q, sn, wiki_cache)
                         if parsed.verbose:
-                            print(f'  \u2022 [{clean_q}] episode count for S{sn:02d}... {ep_count}', file=sys.stderr, flush=True)
+                            print(f'[{clean_q}] episode count for S{sn:02d}... {ep_count}', file=sys.stderr, flush=True)
                         pack_q = f"{clean_q} S{sn:02d}"
                         if pack_q not in queries:
                             queries.append(pack_q)
@@ -106,7 +106,7 @@ def _build_queries(parsed) -> tuple:
                         continue
                     ep_count = get_season_episode_count(clean_q, season_num, wiki_cache)
                     if parsed.verbose:
-                        print(f'  \u2022 [{clean_q}] episode count for S{season_num:02d}... {ep_count}', file=sys.stderr, flush=True)
+                        print(f'[{clean_q}] episode count for S{season_num:02d}... {ep_count}', file=sys.stderr, flush=True)
                     if not ep_count:
                         if parsed.verbose:
                             name = clean_q or orig_q
