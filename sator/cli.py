@@ -699,7 +699,7 @@ Filters (each at most once):
             _parent_season = _meta_check['spec_idx']
             if _parent_season in _seasons_with_good_pack:
                 if parsed.verbose:
-                    print(f'  \u2192 Skipping {q} (season pack is better)', file=sys.stderr)
+                    print(f'  \u2192 Skipping {q} (pack has >= {settings.PACK_SKIP_EPISODES_SEED_THRESHOLD} seeders)', file=sys.stderr)
                 else:
                     qdisp = q[:50] + '...' if len(q) > 50 else q
                     print(f'\r[{num}/{total}] {qdisp}  \u2192 pack better\033[K', file=sys.stderr, flush=True)
@@ -757,6 +757,11 @@ Filters (each at most once):
                     _best_seeds = result['torrents'][0].get('seeders', 0)
                     if _best_seeds >= settings.PACK_SKIP_EPISODES_SEED_THRESHOLD:
                         _seasons_with_good_pack.add(meta['spec_idx'])
+                        if parsed.verbose:
+                            print(f'  \u2192 Season pack has {_best_seeds} seeders '
+                                  f'(>= threshold {settings.PACK_SKIP_EPISODES_SEED_THRESHOLD}), '
+                                  f'skipping episode queries',
+                                  file=sys.stderr)
             elif meta['type'] == 'episode':
                 result['added'] = 0
                 _series_ep_results.setdefault(meta['spec_idx'], {})[meta['ep_num']] = result
