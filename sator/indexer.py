@@ -3,6 +3,7 @@
 
 import html as htmlmod
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -10,6 +11,10 @@ from dataclasses import dataclass, field
 from typing import List, Callable
 from sator.quality import QualityInfo
 from sator import settings
+import hashlib
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 @dataclass
 class TorrentResult:
@@ -825,10 +830,96 @@ INDEXERS = {
     'rutor': RuTorIndexer(),
 }
 
+# ── Search result cache (disk, TTL 5 min) ─────────────────────────────────
+
+_SEARCH_CACHE_TTL = 300  # 5 minutes
+
+def _search_cache_dir() -> str:
+    """Get cache directory, creating if needed at call time."""
+    base = getattr(settings, 'CACHE_DIR', '~/.cache/sator')
+    return os.path.join(os.path.expanduser(base), 'search_cache')
+
+def _search_cache_key(query: str, tracker: str) -> str:
+    """Generate a deterministic cache key for a query+tracker pair."""
+    h = hashlib.md5(query.encode('utf-8')).hexdigest()[:16]
+    return f"{tracker}_{h}"
+
+def _search_cache_load() -> dict:
+    """Load search cache from disk."""
+    try:
+        cachedir = _search_cache_dir()
+        os.makedirs(cachedir, exist_ok=True)
+        cache_path = os.path.join(cachedir, 'cache.json')
+        if os.path.exists(cache_path):
+            with open(cache_path) as f:
+                return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {}
+
+def _search_cache_save(cache: dict):
+    """Save search cache to disk (prune expired entries)."""
+    try:
+        now = time.time()
+        expired = [k for k, v in cache.items() if now - v.get('_ts', 0) > _SEARCH_CACHE_TTL]
+        for k in expired:
+            del cache[k]
+        cachedir = _search_cache_dir()
+        os.makedirs(cachedir, exist_ok=True)
+        cache_path = os.path.join(cachedir, 'cache.json')
+        with open(cache_path, 'w') as f:
+            json.dump(cache, f, indent=2)
+    except OSError:
+        pass
+
+def _search_one_tracker(query: str, name: str,
+                         cache: dict,
+                         results_list: list,
+                         results_lock: threading.Lock) -> int:
+    """Search a single tracker, with disk cache. Thread-safe. Returns result count."""
+    ck = _search_cache_key(query, name)
+    cached = cache.get(ck)
+    if cached and time.time() - cached.get('_ts', 0) < _SEARCH_CACHE_TTL:
+        raw = cached.get('results', [])
+        with results_lock:
+            for rd in raw:
+                results_list.append(TorrentResult(
+                    title=rd.get('title', ''),
+                    magnet=rd.get('magnet', ''),
+                    size_bytes=rd.get('size_bytes', 0),
+                    seeders=rd.get('seeders', 0),
+                    source=rd.get('source', name),
+                    info_url=rd.get('info_url', ''),
+                    languages=rd.get('languages', []),
+                ))
+        return len(raw)
+
+    indexer = INDEXERS.get(name)
+    if not indexer:
+        return 0
+    raw = indexer.search(query)
+    raw_dicts = []
+    for r in raw:
+        raw_dicts.append({
+            'title': r.title, 'magnet': r.magnet,
+            'size_bytes': r.size_bytes, 'seeders': r.seeders,
+            'source': r.source, 'info_url': r.info_url,
+            'languages': r.languages,
+        })
+    with results_lock:
+        results_list.extend(raw)
+    cache[ck] = {'results': raw_dicts, '_ts': time.time()}
+    return len(raw)
+
+
 def search_all(query: str, trackers: List[str] = None,
                progress_cb: Callable[[str, str, int, str], None] = None
                ) -> List[TorrentResult]:
-    """Search across multiple trackers.
+    """Search across multiple trackers concurrently, with disk cache.
+
+    Uses ThreadPoolExecutor for parallel tracker searches.
+    Results are cached on disk (TTL: 300s) for repeat queries.
+
     progress_cb(name, status, count, error_msg='') is called per tracker:
       - 'requesting': about to query
       - 'ok': success, count=results count
@@ -836,21 +927,35 @@ def search_all(query: str, trackers: List[str] = None,
     """
     if trackers is None:
         trackers = list(settings.DEFAULT_TRACKERS)
+    if not trackers:
+        return []
+
+    cache = _search_cache_load()
     results = []
-    for name in trackers:
-        indexer = INDEXERS.get(name)
-        if not indexer:
-            continue
+    lock = threading.Lock()
+
+    def _search_wrapper(name: str):
         if progress_cb:
             progress_cb(name, 'requesting', 0, '')
         try:
-            raw = indexer.search(query)
-            results.extend(raw)
+            cnt = _search_one_tracker(query, name, cache, results, lock)
             if progress_cb:
-                progress_cb(name, 'ok', len(raw), '')
+                progress_cb(name, 'ok', cnt, '')
         except Exception as e:
             if progress_cb:
                 progress_cb(name, 'error', 0, str(e))
-            continue
+
+    with ThreadPoolExecutor(max_workers=len(trackers)) as ex:
+        futures = {ex.submit(_search_wrapper, name): name
+                   for name in trackers if INDEXERS.get(name)}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                future.result()
+            except Exception as e:
+                if progress_cb:
+                    progress_cb(name, 'error', 0, str(e))
+
+    _search_cache_save(cache)
     return results
 

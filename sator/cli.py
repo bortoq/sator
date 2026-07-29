@@ -498,22 +498,16 @@ def _build_queries(parsed: argparse.Namespace) -> tuple:
                             print(f'  \u26a0 [{clean_q}] season count not found, using pack only',
                                   file=sys.stderr)
                         continue
-                    # Build pack query for each season and add to queries
+                    # Build pack query for each season (episodes added later for weak packs)
                     for sn in range(1, season_count + 1):
                         ep_count = get_season_episode_count(clean_q, sn, wiki_cache)
                         pack_q = f"{clean_q} S{sn:02d}"
                         if pack_q not in queries:
                             queries.append(pack_q)
                         _series_meta[pack_q] = {'type': 'pack', 'spec_idx': sn}
-                        ep_qs = []
-                        if ep_count:
-                            for ep in range(1, ep_count + 1):
-                                ep_q = f"{clean_q} S{sn:02d}E{ep:02d}"
-                                queries.append(ep_q)
-                                _series_meta[ep_q] = {'type': 'episode', 'spec_idx': sn, 'ep_num': ep}
-                                ep_qs.append(ep_q)
                         _series_plan[sn] = {
-                            'pack_q': pack_q, 'ep_queries': ep_qs, 'ep_count': ep_count or 0,
+                            'pack_q': pack_q, 'clean_q': clean_q,
+                            'ep_count': ep_count or 0, 'spec_idx': sn,
                         }
             elif len(spec) == 1:
                 season_num = int(spec[0])
@@ -533,14 +527,9 @@ def _build_queries(parsed: argparse.Namespace) -> tuple:
                     if pack_q not in queries:
                         continue
                     _series_meta[pack_q] = {'type': 'pack', 'spec_idx': season_num}
-                    ep_qs = []
-                    for ep in range(1, ep_count + 1):
-                        ep_q = f"{clean_q} S{season_num:02d}E{ep:02d}"
-                        queries.append(ep_q)
-                        _series_meta[ep_q] = {'type': 'episode', 'spec_idx': season_num, 'ep_num': ep}
-                        ep_qs.append(ep_q)
                     _series_plan[season_num] = {
-                        'pack_q': pack_q, 'ep_queries': ep_qs, 'ep_count': ep_count,
+                        'pack_q': pack_q, 'clean_q': clean_q,
+                        'ep_count': ep_count, 'spec_idx': season_num,
                     }
     
     # ── Cleanup: remove "complete seasons" queries if expanded to seasons ──
@@ -684,28 +673,11 @@ Filters (each at most once):
     # Track magnets added for optional normalization
     _added_magnets = []        # list of (magnet, show_name, season, episode, title)
     
-    # Build index: which episode queries belong to which season (for adaptive skip)
-    _ep_queries_by_season = {}
-    for _q, _meta in _series_meta.items():
-        if _meta['type'] == 'episode':
-            _sn = _meta['spec_idx']
-            _ep_queries_by_season.setdefault(_sn, []).append((_meta['ep_num'], _q))
+    # Track which seasons have good packs (skip episode expansion)
     _seasons_with_good_pack = set()
     
+    # ── Phase 1: process all queries (non-series + pack queries) ──
     for i, q in enumerate(queries):
-        # ── Adaptive skip: if season pack is good, skip episode queries ──
-        _meta_check = _series_meta.get(q)
-        if _meta_check and _meta_check['type'] == 'episode':
-            _parent_season = _meta_check['spec_idx']
-            if _parent_season in _seasons_with_good_pack:
-                if parsed.verbose:
-                    print(f'  \u2192 Skipping {q} (pack has >= {settings.PACK_SKIP_EPISODES_SEED_THRESHOLD} seeders)', file=sys.stderr)
-                else:
-                    qdisp = q[:50] + '...' if len(q) > 50 else q
-                    print(f'\r[{num}/{total}] {qdisp}  \u2192 pack better\033[K', file=sys.stderr, flush=True)
-                # Mark as empty result for _series_ep_results
-                _series_ep_results.setdefault(_parent_season, {})[_meta_check['ep_num']] = None
-                continue
         num = i + 1
         
         # Build current language / subtitle filters
@@ -800,6 +772,61 @@ Filters (each at most once):
                         'season': _t_season,
                         'episode': _t_episode,
                     })
+    
+    # ── Phase 2: episode queries for weak packs ──────────────────────────
+    if _series_plan:
+        _ep_queries_to_run = []  # list of (query, season_num, ep_num)
+        for season_num, plan in _series_plan.items():
+            if season_num in _seasons_with_good_pack:
+                continue  # pack is good, skip episode expansion
+            clean_q = plan.get('clean_q', '')
+            ep_count = plan.get('ep_count', 0)
+            if not clean_q or not ep_count:
+                continue
+            for ep in range(1, ep_count + 1):
+                ep_q = f"{clean_q} S{season_num:02d}E{ep:02d}"
+                _series_meta[ep_q] = {'type': 'episode', 'spec_idx': season_num, 'ep_num': ep}
+                _ep_queries_to_run.append((ep_q, season_num, ep))
+        
+        if _ep_queries_to_run:
+            _total_ep = len(_ep_queries_to_run)
+            for _j, (_ep_q, _sn, _ep) in enumerate(_ep_queries_to_run):
+                _num = total + _j + 1
+                _total_all = total + _total_ep
+                # Build filters (same as Phase 1)
+                # Rebuild filters for this query
+                _ep_lang = list(lang_filters)
+                if _ep_q in orig_lang_map and orig_lang_map[_ep_q]:
+                    _ep_lang.append(orig_lang_map[_ep_q])
+                _ep_subs = list(subs_filters)
+                if has_original_subs and _ep_q in orig_lang_map and orig_lang_map[_ep_q]:
+                    _ep_subs.append(orig_lang_map[_ep_q])
+                _ep_filters = {}
+                rl = _res_int(parsed.rl)
+                rb = _res_int(parsed.rb)
+                zl = _size_bytes(parsed.zl)
+                zb = _size_bytes(parsed.zb)
+                if rl is not None: _ep_filters['rl'] = rl
+                if rb is not None: _ep_filters['rb'] = rb
+                if zl is not None: _ep_filters['zl'] = zl
+                if zb is not None: _ep_filters['zb'] = zb
+                if _ep_lang: _ep_filters['lang'] = _ep_lang
+                if _ep_subs: _ep_filters['subs'] = _ep_subs
+                if parsed.exclude: _ep_filters['excludes'] = [x.strip() for x in parsed.exclude.split(',') if x.strip()]
+                if parsed.tmdb_key: _ep_filters['tmdb_key'] = parsed.tmdb_key
+                _ep_filters['tmdb_enrich'] = parsed.enrich
+                
+                _ep_result = _process_query_internal(
+                    _ep_q, _ep_filters, False, parsed.qb_url,
+                    parsed.category, tags_str, parsed.output,
+                    verbose=parsed.verbose,
+                    show_tracker_titles=parsed.tracker_titles,
+                    query_num=_num, total_queries=_total_all,
+                    best_mode=not parsed.more,
+                )
+                if _ep_result.get('found_any'):
+                    _ep_result['added'] = 0
+                _series_ep_results.setdefault(_sn, {})[_ep] = _ep_result
     
     # ── Compare series: pack vs episodes ──────────────────────────────────
     if _series_plan:
