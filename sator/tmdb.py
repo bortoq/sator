@@ -211,3 +211,30 @@ def get_season_episode_titles(
         _save_episode_cache(episode_cache)
 
     return result
+
+
+def get_series_season_count(show_name: str, api_key: str = '') -> int:
+    """Get the total number of seasons for a TV show via TMDB.
+
+    Args:
+        show_name: TV show name (e.g. ``Breaking Bad``).
+        api_key: TMDB API key (optional, falls back to config).
+
+    Returns:
+        Total number of seasons (int), or 0 if lookup fails.
+    """
+    try:
+        key = _resolve_key(api_key)
+        if not key:
+            return 0
+
+        show_id = get_tv_show_id(show_name, key)
+        if not show_id:
+            return 0
+
+        data = _tmdb_get(f'tv/{show_id}', key)
+        if not data:
+            return 0
+        return data.get('number_of_seasons', 0)
+    except Exception:
+        return 0

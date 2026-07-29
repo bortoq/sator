@@ -13,6 +13,7 @@ a sidecar ``.orig.json`` mapping original → new names.
 import json
 import os
 import re
+import sys
 from typing import Dict, List, Optional, Tuple
 
 from sator.quality import parse_quality, strip_modifiers, QualityInfo
@@ -190,7 +191,7 @@ def compute_new_name(
         else:
             new_name = template_movie.format(**metadata)
     except KeyError as e:
-        print(f'  \u26a0 Unknown placeholder in template: {e}', file=__import__('sys').stderr)
+        print(f'  \u26a0 Unknown placeholder in template: {e}', file=sys.stderr)
         new_name = file_name
         metadata['error'] = f'Unknown placeholder: {e}'
 
@@ -256,7 +257,7 @@ def write_sidecar(
     # Verify save_path exists
     if not os.path.isdir(save_path):
         print(f'  \u26a0 Sidecar save path does not exist: {save_path}',
-              file=__import__('sys').stderr)
+              file=sys.stderr)
         return None
 
     sidecar = build_sidecar(torrent_hash, torrent_name, file_map,

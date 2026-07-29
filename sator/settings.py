@@ -14,7 +14,7 @@ DEFAULT_ZB = '0'          # size lower bound        (0 = disabled)
 DEFAULT_ZL = '0'          # size upper bound        (0 = disabled)
 DEFAULT_LANG = ['__original__']   # auto-detect original via Wikidata
 DEFAULT_SUBS = []                 # no subtitle filter by default
-DEFAULT_TRACKERS = ['nyaa', 'tpb', 'yourbittorrent', 'torrentfunk', 'magnetz', 'glotorrents']
+DEFAULT_TRACKERS = ['nyaa', 'tpb', 'yourbittorrent', 'torrentfunk', 'magnetz', 'glotorrents', 'anilibria', 'rutor']
 
 # ── Scoring heuristics (process.py) ───────────────────────────────────────
 PREFERRED_RES = 1080
@@ -140,3 +140,19 @@ NORMALIZE_ENABLED = False
 
 # Sidecar file: when normalizing, write original names to a .orig.json file
 SIDECAR_ENABLED = True
+
+# ── AniLibria (anilibria.top) ─────────────────────────────────────────────
+TIMEOUT_ANILIBRIA = 15
+ANILIBRIA_API_URL = 'https://anilibria.top/api/v1'
+ANILIBRIA_SEARCH_LIMIT = 5         # max releases to fetch per query
+
+# ── RuTor (rutor.info / rutor.is) ─────────────────────────────────────────
+TIMEOUT_RUTOR = 15
+RUTOR_BASE_URL = 'https://rutor.info'
+RUTOR_MIRRORS = ['https://rutor.info', 'https://rutor.is']
+RUTOR_ANIME_CATEGORY = 10          # category id for anime on rutor
+
+# ── Adaptive series search ───────────────────────────────────────────────
+# If a season pack has at least this many seeders, skip searching for
+# individual episodes — the pack is good enough and saves significant time.
+PACK_SKIP_EPISODES_SEED_THRESHOLD = 10

@@ -660,6 +660,132 @@ class TorrentFunkIndexer(_YBLikeIndexer):
     base_url = "https://www.torrentfunk.com"
 
 
+# ── AniLibria (anilibria.top) ────────────────────────────────────────────
+
+class AniLibriaIndexer(BaseIndexer):
+    """AniLibria anime torrent indexer via JSON API."""
+    name = "anilibria"
+
+    def search(self, query: str) -> List[TorrentResult]:
+        sq = urllib.parse.quote(query)
+        url = f"{settings.ANILIBRIA_API_URL}/releases/releases?search={sq}&limit={settings.ANILIBRIA_SEARCH_LIMIT}"
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_ANILIBRIA)
+            data = json.loads(resp.read().decode())
+        except Exception:
+            return []
+        releases = data.get('data', data) if isinstance(data, dict) else data
+        if isinstance(releases, dict):
+            releases = releases.get('data', [])
+        if not isinstance(releases, list):
+            return []
+        results = []
+        for r in releases:
+            # Extract title from various possible fields
+            names = r.get('names', {}) or {}
+            title = (r.get('name', '') or r.get('title', '') or
+                     names.get('ru', '') or names.get('en', ''))
+            if not title:
+                continue
+            # Extract magnet from torrent data
+            magnet = r.get('magnet', '') or r.get('torrent_magnet', '')
+            if not magnet:
+                torrents_data = r.get('torrents', {})
+                if isinstance(torrents_data, dict):
+                    for t in torrents_data.values():
+                        if isinstance(t, dict):
+                            magnet = t.get('magnet', '') or t.get('url', '') or ''
+                            if magnet:
+                                break
+                elif isinstance(torrents_data, list):
+                    for t in torrents_data:
+                        if isinstance(t, dict):
+                            magnet = t.get('magnet', '') or t.get('url', '') or ''
+                            if magnet:
+                                break
+            size_bytes = 0
+            seeders = 0
+            # Languages: check if title has Cyrillic
+            import re as _re
+            has_cyrillic = bool(_re.search(r'[а-яА-ЯёЁ]', title))
+            languages = ['ru'] if has_cyrillic else []
+            results.append(TorrentResult(
+                title=title, magnet=magnet, size_bytes=size_bytes,
+                seeders=seeders, source=self.name, languages=languages,
+            ))
+        return results
+
+
+# ── RuTor (rutor.info) ───────────────────────────────────────────────────
+
+class RuTorIndexer(BaseIndexer):
+    """RuTor torrent indexer (Russian tracker, HTML scraping)."""
+    name = "rutor"
+
+    def search(self, query: str) -> List[TorrentResult]:
+        sq = urllib.parse.quote(query)
+        results = []
+        mirrors = list(settings.RUTOR_MIRRORS)
+        if not mirrors:
+            mirrors = ['https://rutor.info']
+        for base_url in mirrors:
+            try:
+                url = f"{base_url}/search/{sq}"
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': settings.UA_INDEXER,
+                })
+                resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_RUTOR)
+                html = resp.read().decode('utf-8', errors='replace')
+                if not html:
+                    continue
+                # Parse HTML table rows
+                import re as _re
+                # Find torrent rows: <tr class="gai"> or <tr class="tum"> ...
+                for row in _re.finditer(
+                    r'<tr[^>]*class="(?:gai|tum|sun)"[^>]*>(.*?)</tr>',
+                    html, _re.DOTALL | _re.IGNORECASE
+                ):
+                    row_html = row.group(1)
+                    # Extract title from <a> tag
+                    tm = _re.search(r'<a[^>]*href="(/torrent/\d+[^"]*)"[^>]*>([^<]+)</a>', row_html)
+                    if not tm:
+                        continue
+                    title = htmlmod.unescape(tm.group(2)).strip()
+                    info_url = base_url + tm.group(1)
+                    # Extract magnet
+                    mm = _re.search(r'href="(magnet:[^"]*)"', row_html)
+                    magnet = htmlmod.unescape(mm.group(1)) if mm else ''
+                    # Size
+                    sm = _re.search(r'<td[^>]*>([0-9.]+)\s*(KiB|MiB|GiB|TiB)[^<]*</td>', row_html)
+                    size_bytes = 0
+                    if sm:
+                        num = float(sm.group(1))
+                        unit = sm.group(2).upper()
+                        if unit == 'TiB': size_bytes = int(num * 1024**4)
+                        elif unit == 'GiB': size_bytes = int(num * 1024**3)
+                        elif unit == 'MiB': size_bytes = int(num * 1024**2)
+                        elif unit == 'KiB': size_bytes = int(num * 1024)
+                    # Seeders / leechers: typically last two <td> or <span>
+                    tds = _re.findall(r'<td[^>]*>([0-9]+)</td>', row_html)
+                    seeders = int(tds[-2]) if len(tds) >= 2 else 0
+                    # Language detection: Cyrillic or dub markers
+                    has_cyrillic = bool(_re.search(r'[а-яА-ЯёЁ]', title))
+                    has_dub_marker = bool(_re.search(r'\|\s*[LDP]\s*\|', title))
+                    languages = ['ru'] if (has_cyrillic or has_dub_marker) else []
+                    results.append(TorrentResult(
+                        title=title, magnet=magnet, size_bytes=size_bytes,
+                        seeders=seeders, source=self.name, info_url=info_url,
+                        languages=languages,
+                    ))
+                # If we got results from this mirror, stop
+                if results:
+                    break
+            except Exception:
+                continue
+        return results
+
+
 # Registry of available indexers
 INDEXERS = {
     'nyaa': NyaaIndexer(),
@@ -673,6 +799,8 @@ INDEXERS = {
     'torrentfunk': TorrentFunkIndexer(),
     'magnetz': MagnetzIndexer(),
     'glotorrents': GloTorrentsIndexer(),
+    'anilibria': AniLibriaIndexer(),
+    'rutor': RuTorIndexer(),
 }
 
 def search_all(query: str, trackers: List[str] = None,

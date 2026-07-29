@@ -20,7 +20,6 @@ sator -a downloads.txt                                           # add magnets f
 - **Verbose output** (`-v`): shows all results including filtered-out (with reason)
 - **qBittorrent integration** (`-a`): auto-add found torrents
 - **Blacklist**: built-in exclusion of CAM/TS/scrubbed releases
-- **Tracker selection** (`-T`): restrict which trackers to search
 - **Output file** (`-o FILE`): write magnets/URLs (suppress screen spam)
 - **Series expansion** (`-sn`): auto-expand season/episode ranges into individual queries
 - **Sub-commands**: `run`, `help`
@@ -242,8 +241,10 @@ Use `-t` without a value to require subtitles matching the original language.
 | **TorrentFunk** | ✅ Working | JSON API |
 | **Magnetz** | ✅ Working | JSON API |
 | **GloTorrents** | ✅ Working | HTML scrape |
+| **AniLibria** | ✅ Working | JSON API v1, Russian anime (dub) |
+| **RuTor** | ✅ Working | HTML scrape, Russian anime (dub) |
 
-Default trackers (when `-T` not used): `nyaa`, `tpb`, `yourbittorrent`, `torrentfunk`, `magnetz`, `glotorrents`.
+Default trackers (when `-T` not used): `nyaa`, `tpb`, `yourbittorrent`, `torrentfunk`, `magnetz`, `glotorrents`, `anilibria`, `rutor`.
 
 ## Detail Page Enrichment
 

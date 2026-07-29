@@ -44,11 +44,15 @@ def filter_result_json(result: dict, filters: dict) -> [dict]:
     if zb and size_bytes > 0 and size_bytes < zb:
         return None
 
-    # Language filters
+    # Language filters (check both title parse and indexer-provided languages)
     lang_filters = filters.get('lang', [])
     if lang_filters:
         detected = parse_languages(title)
         has_lang = any(lc in detected for lc in lang_filters)
+        # Also check languages pre-set by indexer (e.g. RuTor marks ru for Cyrillic titles)
+        if not has_lang:
+            idx_langs = result.get('languages', [])
+            has_lang = any(lc in idx_langs for lc in lang_filters)
         if not has_lang:
             # If no language detected in title AND filter is only English,
             # pass through (English is the default/unmarked language)

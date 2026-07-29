@@ -144,6 +144,36 @@ def get_wikidata_original_lang(query: str, cache_file: str = "") -> str:
             if iso:
                 break
         if not iso:
+            # ── Fuzzy fallback via Wikipedia opensearch ──
+            # If exact Wikipedia search fails (e.g. typo "bojack horsman"),
+            # use opensearch which suggests corrected titles.
+            try:
+                params = urllib.parse.urlencode({
+                    'action': 'opensearch',
+                    'search': query, 'limit': '3', 'format': 'json',
+                })
+                req = urllib.request.Request(
+                    f'https://en.wikipedia.org/w/api.php?{params}',
+                    headers={'User-Agent': settings.UA_SATOR}
+                )
+                resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
+                # resp[1] is the list of suggestion titles
+                suggestions = resp[1] if len(resp) >= 2 else []
+                for suggestion in suggestions:
+                    # Verify suggestion shares words with query (relevance)
+                    sug_words = set(w for w in re.sub(r'[^a-z0-9 ]', ' ', suggestion.lower()).split() if len(w) > 2)
+                    qry_words = set(w for w in re.sub(r'[^a-z0-9 ]', ' ', query.lower()).split() if len(w) > 2)
+                    if qry_words and sug_words:
+                        overlap = qry_words & sug_words
+                        if not overlap:
+                            continue
+                    iso = _get_lang_for_title(suggestion)
+                    if iso:
+                        break
+            except Exception:
+                pass
+
+        if not iso:
             return ""
 
 
@@ -329,6 +359,115 @@ def get_season_episode_count(series_query: str, season_num: int,
             return ep_count
 
         return 0
+
+    except Exception:
+        return 0
+
+
+def get_series_season_count_wikidata(series_query: str,
+                                     cache_file: str = "") -> int:
+    """Get the total number of seasons for a TV series via Wikidata.
+
+    Uses the same Wikipedia→Wikidata lookup as ``get_wikidata_original_lang``,
+    then counts season-level entities (P527) that are instances of TV season (P31=Q3464665).
+
+    Returns number of seasons (int), or 0 if not found.
+    """
+    # Guard: reject None/empty
+    if not series_query:
+        return 0
+    # Clean query
+    cleaned = re.sub(r'\s*S\d+(E\d+)?\s*$', '', series_query).strip()
+    if not cleaned:
+        cleaned = series_query
+
+    # Check cache
+    cache_key = f'season_count:{cleaned}'
+    if cache_file and os.path.exists(cache_file):
+        try:
+            with open(cache_file) as f:
+                cache = json.load(f)
+            if cache_key in cache:
+                return cache[cache_key]
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    try:
+        # 1. Search Wikipedia — try multiple query variants
+        queries_to_try = [
+            cleaned,
+            cleaned + ' TV series',
+            cleaned + ' (TV series)',
+        ]
+        wp_title = ''
+        for sq in queries_to_try:
+            pages = _wp_search(sq)
+            if pages:
+                for p in pages:
+                    title_lower = p.lower()
+                    if 'list of' in title_lower:
+                        continue
+                    wp_title = p
+                    break
+                if wp_title:
+                    break
+
+        if not wp_title:
+            return 0
+
+        # 2. Get Wikidata ID
+        qid = _get_wikidata_id(wp_title)
+        if not qid:
+            return 0
+
+        # 3. Get Wikidata entity
+        entity = _get_wikidata_entity(qid)
+        claims = entity.get('claims', {})
+
+        # 4. Find season entities via P527 (has part) and count unique season numbers
+        season_numbers = set()
+        for claim in claims.get('P527', []):
+            val = claim.get('mainsnak', {}).get('datavalue', {})
+            sid = val.get('value', {}).get('id', '')
+            if not sid:
+                continue
+            s_entity = _get_wikidata_entity(sid)
+            s_claims = s_entity.get('claims', {})
+
+            # Verify it's a television season (P31 = Q3464665)
+            is_season = False
+            for c in s_claims.get('P31', []):
+                cv = c.get('mainsnak', {}).get('datavalue', {})
+                if cv.get('value', {}).get('id') == 'Q3464665':
+                    is_season = True
+                    break
+            if not is_season:
+                continue
+
+            # Extract season number from English label
+            s_labels = s_entity.get('labels', {})
+            s_label = s_labels.get('en', {}).get('value', '')
+            sn_match = re.search(r'season[,\s]*(\d+)', s_label, re.I)
+            if sn_match:
+                season_numbers.add(int(sn_match.group(1)))
+
+        season_count = len(season_numbers) if season_numbers else 0
+
+        # Cache result
+        if cache_file:
+            try:
+                cache = {}
+                if os.path.exists(cache_file):
+                    with open(cache_file) as f:
+                        cache = json.load(f)
+                cache[cache_key] = season_count
+                os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+                with open(cache_file, 'w') as f:
+                    json.dump(cache, f)
+            except OSError:
+                pass
+
+        return season_count
 
     except Exception:
         return 0

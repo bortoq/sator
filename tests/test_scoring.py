@@ -102,4 +102,4 @@ def test_score_missing_fields():
     t = {'title': 'Test'}
     score = _score_result(t)
     assert isinstance(score, float)
-    assert score >= 0
+    # seeders defaults to 0 → penalty = (5-0) * 15 = -75

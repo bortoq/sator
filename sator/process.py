@@ -12,6 +12,7 @@ from sator.tmdb import enrich_query
 from sator.quality import parse_quality
 from sator.language import parse_languages
 from sator.exclude import is_excluded
+from sator.series_match import extract_series_name_from_query, extract_series_name_from_title, series_name_matches, season_ep_in_query_matches_title
 
 
 # Scoring for best-mode selection
@@ -51,7 +52,183 @@ def _score_result(t: dict, preferred_res: int = settings.PREFERRED_RES) -> float
     if any(g in title for g in settings.TRUSTED_GROUPS):
         score += 20
 
+    # 6. Magnet tracker quality: penalise torrents without valid trackers.
+    # Use a large negative value so no other score component can compensate,
+    # ensuring any result with valid trackers always outranks one without.
+    if not _magnet_has_valid_trackers(t.get('magnet', '')):
+        score += float('-inf')
+
     return score
+
+
+def _seeder_bucket(t: dict) -> int:
+    """Return a seeder-bucket index for sorting.
+    Bucket 0 (10+ seeders): actively seeded — fast download.
+    Bucket 1 (3-9 seeders): reasonably seeded — should complete.
+    Bucket 2 (1-2 seeders): low seeders — may be slow.
+    Bucket 3 (0 seeders):   dead — very unlikely to complete.
+    Within the same bucket, the score (source, resolution, …) decides.
+    """
+    s = t.get('seeders', 0)
+    if s >= 10:
+        return 0
+    if s >= 3:
+        return 1
+    if s >= 1:
+        return 2
+    return 3
+
+
+def _magnet_has_valid_trackers(magnet: str) -> bool:
+    """Check if a magnet URI has at least one valid tracker announce URL.
+
+    A valid tracker must have a real announce endpoint (udp://, http:///announce).
+    URLs pointing to code repositories (github, gitlab) are rejected.
+    Magnets with no trackers at all are accepted (may work via DHT/PEX).
+    Only magnets that explicitly list tracker URLs AND all of them are
+    invalid are penalised.
+    """
+    if not magnet:
+        return True  # No magnet to check — pass through
+
+    import urllib.parse
+    try:
+        parsed = urllib.parse.urlparse(magnet)
+    except Exception:
+        return True
+    if parsed.scheme != 'magnet':
+        return True
+
+    params = urllib.parse.parse_qs(parsed.query)
+    trackers = params.get('tr', [])
+
+    if not trackers:
+        return True  # No trackers at all — DHT/PEX may work
+
+    for tr_url in trackers:
+        tr_url = urllib.parse.unquote(tr_url)
+        try:
+            tr_parsed = urllib.parse.urlparse(tr_url)
+        except Exception:
+            continue
+
+        # Reject known non-tracker hosts
+        host = tr_parsed.hostname or ''
+        if any(domain in host for domain in ['github', 'gitlab', 'bitbucket']):
+            continue
+
+        # UDP trackers are always valid if they have host:port
+        if tr_parsed.scheme == 'udp' and tr_parsed.hostname and tr_parsed.port:
+            return True
+
+        # HTTP/HTTPS trackers should end with /announce or have a port
+        if tr_parsed.scheme in ('http', 'https'):
+            path = tr_parsed.path or ''
+            if path.endswith('/announce') or tr_parsed.port:
+                return True
+            if path and path != '/':
+                return True
+
+    return False
+
+
+
+
+
+def _extract_info_hash(magnet: str) -> str:
+    """Extract the btih info hash from a magnet URI.
+    Returns uppercase hex string (40 chars), or empty string if not found.
+    """
+    if not magnet:
+        return ''
+    import re as _re
+    m = _re.search(r'btih:([a-fA-F0-9]{40})', magnet)
+    return m.group(1).upper() if m else ''
+
+
+def _sanitize_magnet(magnet: str) -> str:
+    """Remove invalid tracker URLs (GitHub, GitLab, Bitbucket) from a magnet link.
+    Returns the cleaned magnet with only valid announce trackers.
+    If no valid trackers remain, returns the magnet with all &tr= params removed
+    (the torrent will rely on DHT/PEX).
+    """
+    if not magnet:
+        return magnet
+
+    import urllib.parse
+    try:
+        parsed = urllib.parse.urlparse(magnet)
+    except Exception:
+        return magnet
+    if parsed.scheme != 'magnet':
+        return magnet
+
+    params = urllib.parse.parse_qs(parsed.query)
+    trackers = params.get('tr', [])
+    if not trackers:
+        return magnet  # nothing to sanitize
+
+    valid_trackers = []
+    for tr_url in trackers:
+        tr_decoded = urllib.parse.unquote(tr_url)
+        try:
+            tr_parsed = urllib.parse.urlparse(tr_decoded)
+            host = tr_parsed.hostname or ''
+            if any(domain in host for domain in ['github', 'gitlab', 'bitbucket']):
+                continue  # skip invalid tracker
+        except Exception:
+            continue
+        valid_trackers.append(tr_url)
+
+    if len(valid_trackers) == len(trackers):
+        return magnet  # no bad trackers found
+
+    # Rebuild magnet with only valid trackers
+    clean_query_parts = []
+    for k, vlist in params.items():
+        if k == 'tr':
+            for v in valid_trackers:
+                clean_query_parts.append(f'{k}={v}')
+        else:
+            for v in vlist:
+                clean_query_parts.append(f'{k}={v}')
+    return f'magnet:?{"&".join(clean_query_parts)}'
+
+
+def _torrent_exists_in_qb(info_hash: str, qb_url: str) -> bool:
+    """Check if a torrent with the given info hash already exists in qBittorrent.
+    Uses QBClient which handles auth automatically.
+    
+    Returns True if found, False on error or not found.
+    """
+    if not info_hash:
+        return False
+    try:
+        from sator.qb_client import QBClient, QBConfig
+        client = QBClient(QBConfig(url=qb_url))
+        torrents = client.get_torrents()
+        if isinstance(torrents, list):
+            ih = info_hash.upper()
+            return any(t.get('hash', '').upper() == ih for t in torrents)
+    except Exception:
+        pass
+    return False
+
+
+def _safe_qb_add(magnet: str, qb_url: str, category: str = '', tags: str = '',
+                 paused: bool = False) -> bool:
+    """Sanitize magnet, check for duplicates, then add to qBittorrent.
+    
+    Returns True if the torrent was actually added (not a duplicate).
+    """
+    magnet = _sanitize_magnet(magnet)
+    if not magnet or not _magnet_has_valid_trackers(magnet):
+        return False
+    # Check for existing torrent with same info hash
+    ih = _extract_info_hash(magnet)
+    if ih and _torrent_exists_in_qb(ih, qb_url):
+        return False  # already in qB, skip
+    return _qb_add_simple(magnet, qb_url, category, tags, paused)
 
 
 
@@ -68,10 +245,12 @@ TRACKER_LABELS = {
     'torrentfunk': 'TorrentFunk',
     'magnetz': 'Magnetz',
     'glotorrents': 'GloTorrents',
+    'anilibria': 'AniLibria',
+    'rutor': 'RuTor',
 }
 
 # Fixed order for compact status chars
-TRACKER_ORDER = ['nyaa', 'tpb', 'yts', 'solidtorrents', 'eztv', 'tgx', 'limetorrents', 'yourbittorrent', 'torrentfunk', 'magnetz', 'glotorrents']
+TRACKER_ORDER = ['nyaa', 'tpb', 'yts', 'solidtorrents', 'eztv', 'tgx', 'limetorrents', 'yourbittorrent', 'torrentfunk', 'magnetz', 'glotorrents', 'anilibria', 'rutor']
 
 def _make_progress_cb(query_num: int, total_queries: int, query: str,
                        verbose: bool, status_chars: list,
@@ -154,6 +333,11 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
     enriched = enrich_query(query, api_key=filters.get('tmdb_key', '')) if filters.get('tmdb_enrich', True) else query
     results = search_all(enriched, trackers=trackers, progress_cb=progress_cb)
     
+    # Extract series name from query for title-based filtering.
+    # This prevents false positives where the query term matches an episode
+    # title rather than the series name.
+    query_series = extract_series_name_from_query(query)
+    
     out = {
         'found': 0,
         'added': 0,
@@ -213,6 +397,37 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         d['quality'] = asdict(r.quality)
         d['languages'] = r.languages
         
+        # Series name verification: reject results where the extracted show
+        # name does not match the queried series. This prevents false positives
+        # when the query term matches an *episode title* rather than the series
+        # name (e.g. "Lost" → "The Acolyte S01E01 Lost Found", not "Lost S02E21").
+        if query_series:
+            result_series = extract_series_name_from_title(d.get('title', ''))
+            if result_series and not series_name_matches(query_series, result_series):
+                all_filtered += 1
+                if r.source in filtered_out:
+                    filtered_out[r.source] += 1
+                if verbose:
+                    sz = bytes_to_human(d.get('size_bytes', 0))
+                    print(f'  \u2717 Series mismatch: expected "{query_series}", got "{result_series}" | {sz} | {d.get("title", "")}',
+                          file=sys.stderr)
+                continue
+        
+        # Season/episode verification: reject results where the season/episode
+        # numbers don't match what was requested. This prevents false positives
+        # when the tracker ignores the season/ep portion of the query and
+        # returns episodes from a different season (e.g. requesting S02E21
+        # but getting S05E09 — both "Lost", different episodes).
+        if not season_ep_in_query_matches_title(query, d.get('title', '')):
+            all_filtered += 1
+            if r.source in filtered_out:
+                filtered_out[r.source] += 1
+            if verbose:
+                sz = bytes_to_human(d.get('size_bytes', 0))
+                print(f'  \u2717 Season/ep mismatch: expected episode from query "{query}", got "{d.get("title", "")}" | {sz}',
+                      file=sys.stderr)
+            continue
+        
         # First filter pass
         filtered = filter_result_json(d, filters)
         
@@ -224,6 +439,26 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
                 if filtered:
                     d = d2  # use enriched version
         
+        # ── Magnet validity check ──
+        # Reject results whose magnet explicitly has only invalid tracker URLs
+        # (e.g. GitHub URLs, broken announce endpoints).
+        # Magnets without any &tr= params are accepted (DHT/PEX may work).
+        magnet_field = d.get('magnet', '')
+        if magnet_field and not _magnet_has_valid_trackers(magnet_field):
+            all_filtered += 1
+            if r.source in filtered_out:
+                filtered_out[r.source] += 1
+            # Collect as fallback so something is shown if no valid result exists
+            d['magnet'] = _sanitize_magnet(d.get('magnet', ''))
+            _fallback_candidates.append(d)
+            if verbose:
+                sz_raw = bytes_to_human(d.get('size_bytes', 0))
+                seed_n = d.get('seeders', 0)
+                sz_short = sz_raw.split()[0].split('.')[0] + sz_raw.split()[1][0] if sz_raw and ' ' in sz_raw else '0B'
+                print(f'  \u2717 Bad tracker | {sz_short} | {d.get("title", "")} | seeds:{seed_n}',
+                      file=sys.stderr, flush=True)
+            continue
+
         if not filtered:
             all_filtered += 1
             # Track per-tracker filtered count
@@ -248,6 +483,12 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
                     sz = f'{num}{unit}'
                 print(f'  \u2717 {sz} | {d.get("title", "")} | seeds:{seed_raw}', file=sys.stderr, flush=True)
             continue
+        
+        # Sanitize magnet: remove any invalid tracker URLs (GitHub etc.)
+        d['magnet'] = _sanitize_magnet(d.get('magnet', ''))
+        # Also update filtered (which may be a different dict)
+        if 'magnet' in filtered:
+            filtered['magnet'] = d['magnet']
         
         out['found'] += 1
         out['found_any'] = True
@@ -290,7 +531,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
     # ── Not best-mode: sort all results by score ──
     if not best_mode and out['torrents']:
         scored = [(t, _score_result(t)) for t in out['torrents']]
-        scored.sort(key=lambda x: (x[0].get('seeders', 0) == 0, -x[1]))
+        scored.sort(key=lambda x: (_seeder_bucket(x[0]), -x[1]))
         out['torrents'] = [t for t, _ in scored]
         out['magnets'] = [t.get('magnet', '') for t in out['torrents'] if t.get('magnet')]
         out['display_lines'] = []
@@ -307,7 +548,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
     # --- Best mode: select single best result ---
     if best_mode and out['torrents']:
         scored = [(_score_result(t), t) for t in out['torrents']]
-        scored.sort(key=lambda x: (x[1].get('seeders', 0) == 0, -x[0]))
+        scored.sort(key=lambda x: (_seeder_bucket(x[1]), -x[0]))
         best_score, best = scored[0]
         
         # Replace all torrents with just the best one
@@ -329,23 +570,32 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         if best.get('magnet') and not output_file:
             out['display_lines'].append(f"    {best['magnet']}")
         
-        # Add best torrent to qB
-        out['added'] = 1 if (qb_add and best.get('magnet') and
-                            _qb_add_simple(best['magnet'], qb_url, category, tags)) else 0
+        # Add best torrent to qB (with sanitization + duplicate check)
+        if qb_add and best.get('magnet'):
+            out['added'] = 1 if _safe_qb_add(best['magnet'], qb_url, category, tags) else 0
+        else:
+            out['added'] = 0
     
-    # ── NOT best-mode: add all filtered to qB ──
+    # ── NOT best-mode: add all filtered to qB (with sanitization + duplicate check) ──
     if not best_mode and qb_add:
         for t in out['torrents']:
-            if t.get('magnet') and _qb_add_simple(t['magnet'], qb_url, category, tags):
+            if t.get('magnet') and _safe_qb_add(t['magnet'], qb_url, category, tags):
                 out['added'] += 1
     
         
     # ── Fallback: no results passed filters → return filtered-out items ──
     # best_mode: pick single best;  not best_mode: return all (‑m behaviour)
-    if not out['torrents'] and _fallback_candidates:
+    # Skip fallback if a non-English language filter is active — returning
+    # results in the wrong language (e.g. Ukrainian when asking for Russian)
+    # is worse than returning nothing.
+    _skip_fallback = False
+    _lang_filters = filters.get('lang', [])
+    if _lang_filters and _lang_filters != ['en']:
+        _skip_fallback = True
+    if not out['torrents'] and _fallback_candidates and not _skip_fallback:
         # Score all candidates
         scored = [(t, _score_result(t)) for t in _fallback_candidates]
-        scored.sort(key=lambda x: (x[0].get('seeders', 0) == 0, -x[1]))
+        scored.sort(key=lambda x: (_seeder_bucket(x[0]), -x[1]))
         
         if best_mode:
             # Single best result
@@ -376,8 +626,10 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             if magnet and not output_file:
                 out['display_lines'].append(f"    {magnet}")
             
-            out['added'] = 1 if (qb_add and magnet and
-                                  _qb_add_simple(magnet, qb_url, category, tags, paused=True)) else 0
+            if qb_add and magnet:
+                out['added'] = 1 if _safe_qb_add(magnet, qb_url, category, tags, paused=True) else 0
+            else:
+                out['added'] = 0
             
             if source:
                 best_src = source
@@ -418,7 +670,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             out['added'] = 0
             if qb_add:
                 for t in fb_list:
-                    if t.get('magnet') and _qb_add_simple(t['magnet'], qb_url, category, tags, paused=True):
+                    if t.get('magnet') and _safe_qb_add(t['magnet'], qb_url, category, tags, paused=True):
                         out['added'] += 1
     
     # best_src is captured during the filter loop
@@ -443,11 +695,15 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             # Tracker had no results but no error either
             status_chars[i] = 'x'
     
-    # Print final line
+    # Print final line (with seeders of selected torrent if available)
     if not verbose:
         qdisp = query[:50] + '...' if len(query) > 50 else query
         chars = ''.join(status_chars)
-        print(f'\r[{query_num}/{total_queries}] {qdisp}  {chars}\033[K', file=sys.stderr, flush=True)
+        _suffix = ''
+        if out.get('torrents'):
+            _best_seeds = out['torrents'][0].get('seeders', 0)
+            _suffix = f' (seeds: {_best_seeds})'
+        print(f'\r[{query_num}/{total_queries}] {qdisp}  {chars}{_suffix}\033[K', file=sys.stderr, flush=True)
     else:
         # Verbose footer: summary line
         total_raw = len(results)
