@@ -237,13 +237,11 @@ Filters (each at most once):
                 if not _first_lang_shown:
                     print(f' {name}', file=sys.stderr, flush=True)
                     _first_lang_shown = True
-                print(f'  [{q}] \u2192 {iso} ({name})', file=sys.stderr)
             else:
                 orig_lang_map[q] = ''
                 if not _first_lang_shown:
                     print(file=sys.stderr)  # newline after header
                     _first_lang_shown = True
-                print(f'  \u26a0 [{q}] \u2192 could not determine original language', file=sys.stderr)
         if not _first_lang_shown:
             print(file=sys.stderr)  # ensure newline if no langs found
     
@@ -282,8 +280,8 @@ Filters (each at most once):
     print(f'Found: {found_count}', file=sys.stderr)
     if auto_add:
         size_h = bytes_to_human(total_size)
-        print(f'  Added to QB:  {added_count} ({size_h})', file=sys.stderr)
-    print(f'  Time:         {duration // 60}m {duration % 60}s', file=sys.stderr)
+        print(f'Added: {added_count} ({size_h})', file=sys.stderr)
+    print(f'Time:  {duration // 60}m {duration % 60}s', file=sys.stderr)
     
     # ── Output magnets ─────────────────────────────────────────────────────
     if not auto_add and not parsed.output:

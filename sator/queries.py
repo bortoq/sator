@@ -87,9 +87,9 @@ def _build_queries(parsed) -> tuple:
                         continue
                     # Build pack query for each season (episodes added later for weak packs)
                     for sn in range(1, season_count + 1):
-                        print(f'  \u2022 [{clean_q}] episode count for S{sn:02d}...', file=sys.stderr, end='', flush=True)
                         ep_count = get_season_episode_count(clean_q, sn, wiki_cache)
-                        print(f' {ep_count}', file=sys.stderr, flush=True)
+                        if parsed.verbose:
+                            print(f'  \u2022 [{clean_q}] episode count for S{sn:02d}... {ep_count}', file=sys.stderr, flush=True)
                         pack_q = f"{clean_q} S{sn:02d}"
                         if pack_q not in queries:
                             queries.append(pack_q)
@@ -104,9 +104,9 @@ def _build_queries(parsed) -> tuple:
                     clean_q = re.sub(r'\s+S\d{2}(E\d{2})?$', '', orig_q).strip()
                     if not clean_q or clean_q == orig_q:
                         continue
-                    print(f'  \u2022 [{clean_q}] episode count for S{season_num:02d}...', file=sys.stderr, end='', flush=True)
                     ep_count = get_season_episode_count(clean_q, season_num, wiki_cache)
-                    print(f' {ep_count}', file=sys.stderr, flush=True)
+                    if parsed.verbose:
+                        print(f'  \u2022 [{clean_q}] episode count for S{season_num:02d}... {ep_count}', file=sys.stderr, flush=True)
                     if not ep_count:
                         if parsed.verbose:
                             name = clean_q or orig_q
