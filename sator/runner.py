@@ -242,9 +242,9 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
             use_episodes = winner['choice'] == 'episodes'
 
             if use_episodes:
+                found_count += ep_count
                 for ep_res in ep_results.values():
                     if ep_res.get('found_any'):
-                        found_count += ep_res['found']
                         added_count += ep_res['added']
                         total_size_val += ep_res['total_size']
                         all_torrents.extend(ep_res.get('torrents', []))
@@ -275,7 +275,7 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
                     print(f'  \u2192 Using {ep_count} episodes (better than season pack)', file=sys.stderr)
             else:
                 if pack_ok:
-                    found_count += pack_result['found']
+                    found_count += ep_count
                     total_size_val += pack_result['total_size']
                     all_torrents.extend(pack_result.get('torrents', []))
                     if auto_add and parsed.qb_url:

@@ -59,7 +59,7 @@ def _build_queries(parsed) -> tuple:
     
     # ── Episode-level expansion ────────────────────────────────────────────
     cache_dir = os.path.expanduser(settings.CACHE_DIR)
-    wiki_cache = os.path.join(cache_dir, 'seriess.json')
+    wiki_cache = os.path.join(cache_dir, settings.WIKIDATA_SERIES_CACHE_FILE)
     os.makedirs(cache_dir, exist_ok=True)
     
     _series_meta = {}

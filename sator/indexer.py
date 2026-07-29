@@ -632,7 +632,7 @@ class _YBLikeIndexer(BaseIndexer):
 
     def search(self, query: str) -> List[TorrentResult]:
         sq = urllib.parse.quote(query)
-        url = f"{self.base_url}/api/search.json?q={sq}&limit=100"
+        url = f"{self.base_url}/api/search.json?q={sq}&limit={settings.YB_LIKE_SEARCH_LIMIT}"
         try:
             req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_YB_LIKE)
@@ -832,12 +832,12 @@ INDEXERS = {
 
 # ── Search result cache (disk, TTL 5 min) ─────────────────────────────────
 
-_SEARCH_CACHE_TTL = 300  # 5 minutes
+_SEARCH_CACHE_TTL = settings.SEARCH_CACHE_TTL
 
 def _search_cache_dir() -> str:
     """Get cache directory, creating if needed at call time."""
     base = getattr(settings, 'CACHE_DIR', '~/.cache/sator')
-    return os.path.join(os.path.expanduser(base), 'search_cache')
+    return os.path.join(os.path.expanduser(base), settings.SEARCH_CACHE_DIR_NAME)
 
 def _search_cache_key(query: str, tracker: str) -> str:
     """Generate a deterministic cache key for a query+tracker pair."""
@@ -849,7 +849,7 @@ def _search_cache_load() -> dict:
     try:
         cachedir = _search_cache_dir()
         os.makedirs(cachedir, exist_ok=True)
-        cache_path = os.path.join(cachedir, 'cache.json')
+        cache_path = os.path.join(cachedir, settings.SEARCH_CACHE_FILE)
         if os.path.exists(cache_path):
             with open(cache_path) as f:
                 return json.load(f)
@@ -866,7 +866,7 @@ def _search_cache_save(cache: dict):
             del cache[k]
         cachedir = _search_cache_dir()
         os.makedirs(cachedir, exist_ok=True)
-        cache_path = os.path.join(cachedir, 'cache.json')
+        cache_path = os.path.join(cachedir, settings.SEARCH_CACHE_FILE)
         with open(cache_path, 'w') as f:
             json.dump(cache, f, indent=2)
     except OSError:

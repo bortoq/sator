@@ -23,11 +23,11 @@ CONFIG_PATH = os.path.expanduser(settings.CONFIG_PATH)
 # ── Disk caches ──────────────────────────────────────────────────────────────
 
 _EPISODE_CACHE_PATH = os.path.join(
-    os.path.expanduser(settings.CACHE_DIR), 'episodes.json'
+    os.path.expanduser(settings.CACHE_DIR), settings.TMDB_EPISODE_CACHE_FILE
 )
 
 # TTL in seconds: cache entries older than this are discarded
-CACHE_TTL = 7 * 24 * 3600  # 7 days
+CACHE_TTL = settings.TMDB_CACHE_TTL
 
 def _load_episode_cache() -> dict:
     """Load episode title cache from disk, discarding entries older than CACHE_TTL."""

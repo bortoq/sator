@@ -12,7 +12,7 @@ DEFAULT_RB = '0'          # resolution lower bound  (0 = disabled)
 DEFAULT_RL = '0'          # resolution upper bound  (0 = disabled)
 DEFAULT_ZB = '0'          # size lower bound        (0 = disabled)
 DEFAULT_ZL = '0'          # size upper bound        (0 = disabled)
-DEFAULT_LANG = ['__original__']   # auto-detect original via Wikidata
+DEFAULT_LANG = ['__original__']   # auto-detect original language via Wikidata
 DEFAULT_SUBS = []                 # no subtitle filter by default
 DEFAULT_TRACKERS = ['nyaa', 'tpb', 'yourbittorrent', 'torrentfunk', 'magnetz', 'glotorrents', 'anilibria', 'rutor']
 
@@ -156,3 +156,20 @@ RUTOR_ANIME_CATEGORY = 10          # category id for anime on rutor
 # If a season pack has at least this many seeders, skip searching for
 # individual episodes — the pack is good enough and saves significant time.
 PACK_SKIP_EPISODES_SEED_THRESHOLD = 10
+
+# ── Search cache (indexer.py) ─────────────────────────────────────────────
+SEARCH_CACHE_TTL = 300           # seconds; cached search results expire after this
+SEARCH_CACHE_DIR_NAME = 'search_cache'  # subdirectory under CACHE_DIR
+SEARCH_CACHE_FILE = 'cache.json'        # filename for search cache
+
+# ── YB-Like (YourBittorrent / TorrentFunk) search limit ───────────────────
+YB_LIKE_SEARCH_LIMIT = 100
+
+# ── TMDB episode cache ────────────────────────────────────────────────────
+TMDB_CACHE_TTL = 604800           # 7 * 24 * 3600 seconds (7 days)
+TMDB_EPISODE_CACHE_FILE = 'episodes.json'
+
+# ── Wikidata cache filenames ──────────────────────────────────────────────
+WIKIDATA_SERIES_CACHE_FILE = 'seriess.json'
+WIKIDATA_LANG_CACHE_FILE = 'wikilang.json'
+

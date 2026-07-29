@@ -210,7 +210,7 @@ Filters (each at most once):
         sys.exit(1)
     
     # ── Wikidata language cache ────────────────────────────────────────────
-    lang_cache = os.path.join(cache_dir, 'wikilang.json')
+    lang_cache = os.path.join(cache_dir, settings.WIKIDATA_LANG_CACHE_FILE)
     
     # ── Wikidata language / subtitle resolution ────────────────────────────
     orig_lang_map = {}
