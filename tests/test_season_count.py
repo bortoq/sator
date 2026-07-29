@@ -172,7 +172,7 @@ class TestBuildQueriesBareSn:
 
     def test_bare_sn_generates_pack_queries(self):
         """When -sn is bare (empty spec), season pack queries should be added."""
-        from sator.cli import _build_queries
+        from sator.queries import _build_queries
         parsed = self._make_parsed([[]])  # bare -sn
         # This would need TMDB or Wikidata with network access,
         # but we can check the function signature and flow
@@ -182,7 +182,7 @@ class TestBuildQueriesBareSn:
 
     def test_sn_with_number_generates_episode_queries(self):
         """When -sn N is used, episode queries should be generated."""
-        from sator.cli import _build_queries
+        from sator.queries import _build_queries
         parsed = self._make_parsed([['1']])  # -sn 1
         import inspect
         sig = inspect.signature(_build_queries)
@@ -190,7 +190,7 @@ class TestBuildQueriesBareSn:
 
     def test_no_season_number_returns_simple_query(self):
         """Without -sn, no series expansion happens."""
-        from sator.cli import _build_queries
+        from sator.queries import _build_queries
         parsed = self._make_parsed(None)
         import inspect
         sig = inspect.signature(_build_queries)
