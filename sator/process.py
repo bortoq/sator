@@ -702,7 +702,12 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         _suffix = ''
         if out.get('torrents'):
             _best_seeds = out['torrents'][0].get('seeders', 0)
-            _suffix = f' (seeds: {_best_seeds})'
+            _best_size = out['torrents'][0].get('size_bytes', 0)
+            _size_h = bytes_to_human(_best_size) if _best_size else ''
+            if _size_h:
+                _suffix = f' (seeds: {_best_seeds}, size: {_size_h})'
+            else:
+                _suffix = f' (seeds: {_best_seeds})'
         print(f'\r[{query_num}/{total_queries}] {qdisp}  {chars}{_suffix}\033[K', file=sys.stderr, flush=True)
     else:
         # Verbose footer: summary line
