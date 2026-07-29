@@ -210,6 +210,16 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
     # ── Compare series: pack vs episodes ──────────────────────────────────
     if _series_plan:
         for season_num, plan in _series_plan.items():
+            ep_count = plan['ep_count']
+            if not ep_count:
+                # No episode data, use pack as-is
+                pack_result = _series_pack_results.get(season_num)
+                if pack_result and pack_result.get('found_any'):
+                    found_count += pack_result['found']
+                    total_size_val += pack_result['total_size']
+                    all_torrents.extend(pack_result.get('torrents', []))
+                    added_count += pack_result['added']
+                continue
             pack_result = _series_pack_results.get(season_num)
             ep_results = _series_ep_results.get(season_num, {})
             ep_count = plan['ep_count']
