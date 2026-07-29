@@ -219,7 +219,8 @@ Filters (each at most once):
     subs_filters = [s for s in (parsed.subs or []) if s != '__original__']
     
     if has_original or has_original_subs:
-        print('\u2022 Resolving original languages via Wikidata...', file=sys.stderr)
+        print('\u2022 Resolving original languages via Wikidata...', file=sys.stderr, end='', flush=True)
+        _first_lang_shown = False
         for q in queries:
             if q in orig_lang_map:
                 continue
@@ -232,10 +233,18 @@ Filters (each at most once):
             if iso:
                 orig_lang_map[q] = iso
                 name = iso_name(iso) or iso
+                if not _first_lang_shown:
+                    print(f' {name}', file=sys.stderr, flush=True)
+                    _first_lang_shown = True
                 print(f'  [{q}] \u2192 {iso} ({name})', file=sys.stderr)
             else:
                 orig_lang_map[q] = ''
+                if not _first_lang_shown:
+                    print(file=sys.stderr)  # newline after header
+                    _first_lang_shown = True
                 print(f'  \u26a0 [{q}] \u2192 could not determine original language', file=sys.stderr)
+        if not _first_lang_shown:
+            print(file=sys.stderr)  # ensure newline if no langs found
     
     # ── Resolution helpers ─────────────────────────────────────────────────
     def _res_int(val):
