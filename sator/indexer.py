@@ -8,7 +8,7 @@ import re
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import List, Callable
+from typing import List, Callable, Dict, Any, Optional
 from sator.quality import QualityInfo
 from sator import settings
 import hashlib
@@ -841,7 +841,7 @@ def _search_cache_dir() -> str:
 
 def _search_cache_key(query: str, tracker: str) -> str:
     """Generate a deterministic cache key for a query+tracker pair."""
-    h = hashlib.md5(query.encode('utf-8')).hexdigest()[:16]
+    h = hashlib.sha256(query.encode('utf-8')).hexdigest()[:16]
     return f"{tracker}_{h}"
 
 def _search_cache_load() -> dict:
@@ -873,12 +873,17 @@ def _search_cache_save(cache: dict):
         pass
 
 def _search_one_tracker(query: str, name: str,
-                         cache: dict,
-                         results_list: list,
-                         results_lock: threading.Lock) -> int:
+                         cache: Dict[str, Any],
+                         cache_lock: threading.Lock,
+                         results_list: List["TorrentResult"],
+                         results_lock: threading.Lock,
+                         progress_cb: Optional[Callable[[str, str, int, str], None]] = None) -> int:
     """Search a single tracker, with disk cache. Thread-safe. Returns result count."""
     ck = _search_cache_key(query, name)
-    cached = cache.get(ck)
+
+    # Read cache under lock
+    with cache_lock:
+        cached = cache.get(ck)
     if cached and time.time() - cached.get('_ts', 0) < _SEARCH_CACHE_TTL:
         raw = cached.get('results', [])
         with results_lock:
@@ -897,7 +902,13 @@ def _search_one_tracker(query: str, name: str,
     indexer = INDEXERS.get(name)
     if not indexer:
         return 0
-    raw = indexer.search(query)
+    # Guard indexer.search() with try/except
+    try:
+        raw = indexer.search(query)
+    except Exception as e:
+        if progress_cb:
+            progress_cb(name, 'error', 0, str(e))
+        return 0
     raw_dicts = []
     for r in raw:
         raw_dicts.append({
@@ -908,7 +919,9 @@ def _search_one_tracker(query: str, name: str,
         })
     with results_lock:
         results_list.extend(raw)
-    cache[ck] = {'results': raw_dicts, '_ts': time.time()}
+    # Write cache under lock
+    with cache_lock:
+        cache[ck] = {'results': raw_dicts, '_ts': time.time()}
     return len(raw)
 
 
@@ -925,27 +938,38 @@ def search_all(query: str, trackers: List[str] = None,
       - 'ok': success, count=results count
       - 'error': failed, error_msg=reason
     """
+    MAX_CONCURRENT = 10  # upper limit to prevent resource exhaustion
     if trackers is None:
         trackers = list(settings.DEFAULT_TRACKERS)
     if not trackers:
         return []
 
     cache = _search_cache_load()
+    cache_lock = threading.Lock()   # lock for shared cache dict
     results = []
-    lock = threading.Lock()
+    results_lock = threading.Lock()
+    progress_lock = threading.Lock()  # lock for progress_cb calls
 
     def _search_wrapper(name: str):
-        if progress_cb:
-            progress_cb(name, 'requesting', 0, '')
+        with progress_lock:
+            if progress_cb:
+                progress_cb(name, 'requesting', 0, '')
         try:
-            cnt = _search_one_tracker(query, name, cache, results, lock)
-            if progress_cb:
-                progress_cb(name, 'ok', cnt, '')
+            cnt = _search_one_tracker(
+                query, name, cache, cache_lock,
+                results, results_lock,
+                progress_cb=progress_cb,
+            )
+            with progress_lock:
+                if progress_cb:
+                    progress_cb(name, 'ok', cnt, '')
         except Exception as e:
-            if progress_cb:
-                progress_cb(name, 'error', 0, str(e))
+            with progress_lock:
+                if progress_cb:
+                    progress_cb(name, 'error', 0, str(e))
 
-    with ThreadPoolExecutor(max_workers=len(trackers)) as ex:
+    max_workers = min(len(trackers), MAX_CONCURRENT)
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = {ex.submit(_search_wrapper, name): name
                    for name in trackers if INDEXERS.get(name)}
         for future in as_completed(futures):
@@ -953,8 +977,9 @@ def search_all(query: str, trackers: List[str] = None,
             try:
                 future.result()
             except Exception as e:
-                if progress_cb:
-                    progress_cb(name, 'error', 0, str(e))
+                with progress_lock:
+                    if progress_cb:
+                        progress_cb(name, 'error', 0, str(e))
 
     _search_cache_save(cache)
     return results

@@ -267,8 +267,10 @@ class TestSearchDiskCache:
             
             results_list = []
             lock = threading.Lock()
+            cache_lock = threading.Lock()
             count = _search_one_tracker("test query", "mock_tracker",
-                                         cache, results_list, lock)
+                                         cache, cache_lock,
+                                         results_list, lock)
             
             assert count == 1
             assert len(results_list) == 1
@@ -301,8 +303,10 @@ class TestSearchDiskCache:
             
             results_list = []
             lock = threading.Lock()
+            cache_lock = threading.Lock()
             count = _search_one_tracker("test query", "mock_tracker",
-                                         cache, results_list, lock)
+                                         cache, cache_lock,
+                                         results_list, lock)
             
             assert count == 1
             assert results_list[0].title == 'Live Result'
@@ -342,8 +346,10 @@ class TestSearchDiskCache:
             
             results_list = []
             lock = threading.Lock()
+            cache_lock = threading.Lock()
             count = _search_one_tracker("test query", "mock_tracker",
-                                         cache, results_list, lock)
+                                         cache, cache_lock,
+                                         results_list, lock)
             
             # Should have re-fetched
             assert count == 1
