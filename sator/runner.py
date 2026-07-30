@@ -21,7 +21,7 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
     """Run Phase 1 (packs) + Phase 2 (weak pack episodes) + series comparison.
 
     Returns dict with:
-      found_count, added_count, total_size, all_torrents, _added_magnets,
+      found_count, added_count, total_size, all_torrents,
       not_found_items, start_time, _series_pack_results, _series_ep_results
     """
     # ── Resolution helpers ─────────────────────────────────────────────────
@@ -50,9 +50,6 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
     _series_ep_results = {}
     _series_tag_added = set()
     start_time = time.time()
-
-    # Track magnets added for optional normalization
-    _added_magnets = []
 
     # Track which seasons have good packs (skip episode expansion)
     _seasons_with_good_pack = set()
@@ -139,19 +136,6 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
             t['_show_name'] = _clean_q
             t['_season'] = _t_season
             t['_episode'] = _t_episode
-
-        # Track added magnets for normalization
-        if parsed.normalize and result.get('added', 0) > 0:
-            for t in result.get('torrents', []):
-                magnet = t.get('magnet', '')
-                if magnet:
-                    _added_magnets.append({
-                        'magnet': magnet,
-                        'show_name': _clean_q,
-                        'title': t.get('title', ''),
-                        'season': _t_season,
-                        'episode': _t_episode,
-                    })
 
     # ── Phase 2: episode queries for weak packs ──────────────────────────
     if _series_plan:
@@ -261,14 +245,6 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
                                                 parsed.category, ep_tags, paused=False)
                             if ok:
                                 ep_added += 1
-                            if ok and parsed.normalize:
-                                _added_magnets.append({
-                                    'magnet': t['magnet'],
-                                    'show_name': clean_name,
-                                    'title': t.get('title', ''),
-                                    'season': season_num,
-                                    'episode': None,
-                                })
                     added_count += ep_added
 
                 if not parsed.verbose:
@@ -287,14 +263,6 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
                                                     parsed.category, tags_str, paused=False)
                                 if ok:
                                     pack_added += 1
-                                if ok and parsed.normalize:
-                                    _added_magnets.append({
-                                        'magnet': t['magnet'],
-                                        'show_name': clean_name,
-                                        'title': t.get('title', ''),
-                                        'season': season_num,
-                                        'episode': None,
-                                    })
                         added_count += pack_added
                     else:
                         added_count += pack_result['added']
@@ -304,7 +272,6 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
         'added_count': added_count,
         'total_size': total_size_val,
         'all_torrents': all_torrents,
-        '_added_magnets': _added_magnets,
         'not_found_items': not_found_items,
         'start_time': start_time,
         '_series_pack_results': _series_pack_results,

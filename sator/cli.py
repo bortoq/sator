@@ -15,8 +15,7 @@ from sator.qb_client import _qb_add_simple
 from sator import settings
 from sator.queries import _build_queries
 from sator.runner import _run_search
-from sator.normalizer import compute_new_name, _parse_season_episode
-from sator.cli_utils import _parse_sator_file, _normalize_torrents
+from sator.cli_utils import _parse_sator_file
 from sator.subcommands import (
     cmd_parse_languages, cmd_parse_quality, cmd_parse_title,
     cmd_iso_lookup, cmd_qb_add, cmd_search, cmd_wikilang,
@@ -100,8 +99,7 @@ def _parse_cmd_run_args(args: List[str]) -> tuple:
                        help='Disable automatic episode-level expansion for -sn')
     parser.add_argument('--tmdb-key', type=str, default='',
                        help='TMDB API key (overrides config file)')
-    parser.add_argument('-n', '--normalize', action='store_true', default=False,
-                       help='Normalize file names in qBittorrent according to templates')
+    # -n/--normalize was removed (file renaming is now external)
     parser.add_argument('-h', '--help', action='store_true')
     
     try:
@@ -138,12 +136,7 @@ def _direct_download_mode(parsed: argparse.Namespace, tags_str: str):
         if _qb_add_simple(entry['magnet'], parsed.qb_url, parsed.category, tags_str):
             added += 1
     print(f'Added to qBittorrent: {added} links', file=sys.stderr)
-    if parsed.normalize and entries:
-        added_magnets = []
-        for e in entries:
-            item = {'magnet': e['magnet'], 'title': '', 'show_name': e.get('show_name', ''), 'season': e.get('season'), 'episode': e.get('episode')}
-            added_magnets.append(item)
-        _normalize_torrents(parsed, added_magnets, [], len(added_magnets))
+
     sys.exit(0)
 
 # ── Query building (extracted from cmd_run) ───────────────────────────────────
@@ -177,7 +170,6 @@ Search:
   --no-enrich               Disable TMDB enrichment
   --no-episode-expansion    Disable automatic episode-level expansion
   --tmdb-key KEY            TMDB API key (overrides config)
-  -n, --normalize           Normalize file names in qBittorrent (opt-in)
 
 Filters (each at most once):
   -rl RES                   Resolution upper bound
@@ -194,10 +186,6 @@ Filters (each at most once):
     if auto_add and parsed.auto_add != '__flag__':
         auto_file = parsed.auto_add
     
-    # -n needs either -a (rename in qB) or -o (save names to file)
-    if parsed.normalize and not auto_add and not parsed.output:
-        print('  \u26a0 --normalize (-n) requires --auto-add (-a) or --output (-o); ignoring -n', file=sys.stderr)
-        parsed.normalize = False
     
     # ── Direct download mode ───────────────────────────────────────────────
     if not has_search and auto_file:
@@ -271,7 +259,6 @@ Filters (each at most once):
     added_count = _search_result['added_count']
     total_size = _search_result['total_size']
     all_torrents = _search_result['all_torrents']
-    _added_magnets = _search_result['_added_magnets']
     not_found_items = _search_result['not_found_items']
     start_time = _search_result['start_time']
     
@@ -301,27 +288,6 @@ Filters (each at most once):
                     _t_season = t.get('_season')
                     _t_episode = t.get('_episode')
 
-                    # Compute normalized name if -n
-                    _normalized = ''
-                    if parsed.normalize:
-                        try:
-                            _qi = parse_quality(t.get('title', ''))
-                            _sn, _ep = _parse_season_episode(t.get('title', ''))
-                            _show = _t_show or re.sub(r'\s+S\d{2}(E\d{2})?$', '', t.get('title', '')).strip()
-                            nm, _ = compute_new_name(
-                                t.get('title', ''),
-                                template_movie=settings.TEMPLATE_MOVIE,
-                                template_series=settings.TEMPLATE_SERIES,
-                                quality=_qi,
-                                known_season=_t_season or _sn,
-                                known_episode=_t_episode or _ep,
-                                known_show=_show,
-                                ep_title='',
-                            )
-                            _normalized = nm
-                        except Exception:
-                            _normalized = ''
-
                     # Build metadata for re-ingestion
                     _meta = {}
                     if _t_show:
@@ -330,30 +296,16 @@ Filters (each at most once):
                         _meta['season'] = _t_season
                     if _t_episode:
                         _meta['episode'] = _t_episode
-                    if _normalized:
-                        _meta['normalized'] = _normalized
                     _meta_str = json.dumps(_meta, ensure_ascii=False) if _meta else ''
 
                     f.write(f"# [{t.get('source', '?')}] {t.get('title', '')}\n")
                     f.write(f"# Size: {t.get('size_h', '?')} | {t.get('quality_label', '')} | seeders: {t.get('seeders', 0)}\n")
-                    if _normalized:
-                        f.write(f"# Normalized: {_normalized}\n")
                     if _meta_str:
                         f.write(f"# Meta: {_meta_str}\n")
                     f.write(f"{t['magnet']}\n\n")
         except OSError as e:
             print(f'\u2716 Failed to write {parsed.output}: {e}', file=sys.stderr)
             sys.exit(1)
-    
-    # ── Normalize file names in qBittorrent ────────────────────────────────
-    if parsed.normalize and _added_magnets:
-        _normalize_torrents(parsed, _added_magnets, all_torrents, added_count)
-
-
-
-# ── Normalization logic ──────────────────────────────────────────────────────
-
-
 def main():
     try:
         _main()

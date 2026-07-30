@@ -65,7 +65,6 @@ class MockParsed:
         self.category = ''
         self.tags = None
         self.more = False
-        self.normalize = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

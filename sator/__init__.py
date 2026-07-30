@@ -16,5 +16,4 @@ from sator.exclude import is_excluded
 from sator.tmdb import enrich_query
 from sator.process import _process_query_internal
 from sator.series import expand_series_queries, pick_series_best, make_series_tag
-from sator.normalizer import compute_new_name, write_sidecar, build_sidecar, _clean_show_name, _parse_season_episode
 from sator.cli import cmd_run, cmd_process_query, main

@@ -10,7 +10,6 @@ Quick reference
 - Indexers:      DEFAULT_TRACKERS, *BASE_URL, *MIRRORS
 - Cache:         SEARCH_CACHE_TTL, TMDB_CACHE_TTL, CACHE_DIR
 - Series search: PACK_SKIP_EPISODES_SEED_THRESHOLD, SERIES_TAG_PREFIX
-- Templates:     TEMPLATE_MOVIE, TEMPLATE_SERIES, NORMALIZE_ENABLED
 - Resolutions:   RES_4K, RES_FHD, RES_HD, RES_SD
 """
 
@@ -293,23 +292,6 @@ FALLBACK_PENALTY = 500
 SERIES_TAG_PREFIX = 'series:'
 
 
-# ──── Normalize / rename templates ────────────────────────────────────────────────
-# Python format-strings for torrent file renaming (opt-in via -n).
-# Available placeholders:
-#   Movie : {title} {year} {quality} {resolution} {source} {codec} {audio} {hdr}
-#   Series: {show} {season:02d} {episode:02d} {title} (episode name) {quality}
-#           {resolution} {source} {codec} {audio} {hdr} {group} {mod} {ext}
-#   Note: {title} is the episode name for series, movie name for movies.
-TEMPLATE_MOVIE = '{title} ({year}) {mod}.{ext}'
-TEMPLATE_SERIES = '{season:02d}.{episode:02d}. {title}.{ext}'
-
-# Whether normalisation is enabled globally (overridable by -n flag).
-# The -n flag on the CLI always takes precedence over this default.
-NORMALIZE_ENABLED = False
-
-# Whether to write a sidecar .orig.json file when renaming torrents.
-# The sidecar maps new filenames back to their original names for recovery.
-SIDECAR_ENABLED = True
 
 
 # ──── Adaptive series search ──────────────────────────────────────────────────────

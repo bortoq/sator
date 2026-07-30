@@ -56,25 +56,6 @@ magnet:?xt=urn:btih:aaa
         os.unlink(path)
 
 
-def test_parse_sator_file_with_normalized():
-    """Parse file with Normalized: and Meta: lines."""
-    content = """\
-# [tpb] Rick and Morty S09E04
-# Size: 1.2 GiB | WEB-DL 1080p | seeders: 50
-# Normalized: Rick and Morty - S09E04 [WEB-DL 1080p].mkv
-# Meta: {"show_name": "Rick and Morty", "season": 9, "episode": 4, "normalized": "Rick and Morty - S09E04 [WEB-DL 1080p].mkv"}
-magnet:?xt=urn:btih:aaa
-"""
-    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
-        f.write(content)
-        path = f.name
-    try:
-        result = _parse_sator_file(path)
-        assert len(result) == 1
-        assert result[0]['normalized'] == 'Rick and Morty - S09E04 [WEB-DL 1080p].mkv'
-    finally:
-        os.unlink(path)
-
 
 def test_parse_sator_file_empty():
     """Empty file yields empty list."""
