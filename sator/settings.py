@@ -292,8 +292,6 @@ FALLBACK_PENALTY = 500
 SERIES_TAG_PREFIX = 'series:'
 
 
-
-
 # ──── Adaptive series search ──────────────────────────────────────────────────────
 # If a season pack has at least this many seeders, skip searching for
 # individual episodes -- the pack is good enough and saves significant time.
