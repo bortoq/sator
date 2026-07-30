@@ -298,88 +298,19 @@ def _make_progress_cb(query_num: int, total_queries: int, query: str,
     return cb
 
 
-def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
-                           qb_url: str = settings.DEFAULT_QB_URL,
-                           category: str = '', tags: str = '',
-                           output_file: str = '',
-                           verbose: bool = False,
-                           show_tracker_titles: bool = False,
-                           query_num: int = 1,
-                           total_queries: int = 1,
-                           trackers: list = None,
-                           best_mode: bool = True) -> dict:
-    """Internal: search all trackers, filter, optionally add to qBittorrent.
-    Returns dict with {found, added, total_size, magnets, display_lines, found_any,
-                        filtered_count, best_indices}."""
-    
-    # Track per-tracker state for progress
-    status_chars = ['?'] * len(TRACKER_ORDER)
-    tracker_results = {}
-    tracker_errors = {}
-    
-    progress_cb = _make_progress_cb(query_num, total_queries, query,
-                                     verbose, status_chars,
-                                     tracker_results, tracker_errors)
-    
-    if verbose:
-        print(f'[{query_num}/{total_queries}] {query}', file=sys.stderr)
-    
-    # Show tracker titles once if requested
-    if show_tracker_titles and query_num == 1:
-        for name in TRACKER_ORDER:
-            print(TRACKER_LABELS.get(name, name), file=sys.stderr)
-    
-    # Search with progress callback
-    enriched = enrich_query(query, api_key=filters.get('tmdb_key', '')) if filters.get('tmdb_enrich', True) else query
-    results = search_all(enriched, trackers=trackers, progress_cb=progress_cb)
-    
-    # Extract series name from query for title-based filtering.
-    # This prevents false positives where the query term matches an episode
-    # title rather than the series name.
-    query_series = extract_series_name_from_query(query)
-    
-    out = {
-        'found': 0,
-        'added': 0,
-        'total_size': 0,
-        'magnets': [],
-        'torrents': [],
-        'display_lines': [],
-        'found_any': False,
-        'filtered_count': 0,
-        'best_indices': [],
-    }
-    
-    # Group results by source tracker
-    grouped: dict = {}
-    for r in results:
-        src = r.source
-        if src not in grouped:
-            grouped[src] = []
-        grouped[src].append(r)
-    
-    # Track raw counts per tracker (before filtering)
-    raw_counts = {}
-    filtered_out = {}
-    for name in TRACKER_ORDER:
-        if name in grouped:
-            raw_counts[name] = len(grouped[name])
-        else:
-            raw_counts[name] = 0
-        filtered_out[name] = 0
-    
-    # Process and filter results
+
+
+def _filter_and_score_results(results, filters, query, query_series, out,
+                               verbose, output_file, filtered_out, _enrich_cache):
+    """Filter and score all search results. Returns (all_filtered, best_src, _fallback_candidates)."""
     all_filtered = 0
     best_src = None
     _fallback_candidates = []
-    # Cache for detail page enrichment (by info_url)
-    _enrich_cache = {}
-    
+
     def _try_enrich(r, d):
-        '''Fetch detail page once per URL, inject subs/languages into title.'''
+        """Fetch detail page once per URL, inject subs/languages into title."""
         if not r.info_url:
             return d
-        # Check cache
         if r.info_url not in _enrich_cache:
             _enrich_cache[r.info_url] = _enrich_from_detail(r)
         enriched = _enrich_cache[r.info_url]
@@ -391,16 +322,13 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         if enriched.get('subs'):
             d2['_enriched_subs'] = enriched['subs']
         return d2
-    
+
     for r in results:
         d = asdict(r)
         d['quality'] = asdict(r.quality)
         d['languages'] = r.languages
-        
-        # Series name verification: reject results where the extracted show
-        # name does not match the queried series. This prevents false positives
-        # when the query term matches an *episode title* rather than the series
-        # name (e.g. "Lost" → "The Acolyte S01E01 Lost Found", not "Lost S02E21").
+
+        # Series name verification
         if query_series:
             result_series = extract_series_name_from_title(d.get('title', ''))
             if result_series and not series_name_matches(query_series, result_series):
@@ -412,12 +340,8 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
                     print(f'  \u2717 Series mismatch: expected "{query_series}", got "{result_series}" | {sz} | {d.get("title", "")}',
                           file=sys.stderr)
                 continue
-        
-        # Season/episode verification: reject results where the season/episode
-        # numbers don't match what was requested. This prevents false positives
-        # when the tracker ignores the season/ep portion of the query and
-        # returns episodes from a different season (e.g. requesting S02E21
-        # but getting S05E09 — both "Lost", different episodes).
+
+        # Season/episode verification
         if not season_ep_in_query_matches_title(query, d.get('title', '')):
             all_filtered += 1
             if r.source in filtered_out:
@@ -427,28 +351,24 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
                 print(f'  \u2717 Season/ep mismatch: expected episode from query "{query}", got "{d.get("title", "")}" | {sz}',
                       file=sys.stderr)
             continue
-        
+
         # First filter pass
         filtered = filter_result_json(d, filters)
-        
+
         # If filtered but has detail URL, try enrichment and re-filter
         if not filtered and r.info_url:
             d2 = _try_enrich(r, d)
-            if d2 is not d:  # enrichment added something
+            if d2 is not d:
                 filtered = filter_result_json(d2, filters)
                 if filtered:
-                    d = d2  # use enriched version
-        
-        # ── Magnet validity check ──
-        # Reject results whose magnet explicitly has only invalid tracker URLs
-        # (e.g. GitHub URLs, broken announce endpoints).
-        # Magnets without any &tr= params are accepted (DHT/PEX may work).
+                    d = d2
+
+        # Magnet validity check
         magnet_field = d.get('magnet', '')
         if magnet_field and not _magnet_has_valid_trackers(magnet_field):
             all_filtered += 1
             if r.source in filtered_out:
                 filtered_out[r.source] += 1
-            # Collect as fallback so something is shown if no valid result exists
             d['magnet'] = _sanitize_magnet(d.get('magnet', ''))
             _fallback_candidates.append(d)
             if verbose:
@@ -461,20 +381,16 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
 
         if not filtered:
             all_filtered += 1
-            # Track per-tracker filtered count
             if r.source in filtered_out:
                 filtered_out[r.source] += 1
-            # Collect fallback candidate (for both best-mode and -m)
             excludes = filters.get('excludes', [])
             if not excludes or not is_excluded(d.get('title', ''), excludes):
                 d['_quality'] = asdict(parse_quality(d.get('title', '')))
                 d['_languages'] = parse_languages(d.get('title', ''))
                 _fallback_candidates.append(d)
-            # In verbose mode, show filtered-out items too
             if verbose:
                 size_h_raw = bytes_to_human(d.get('size_bytes', 0))
                 seed_raw = d.get('seeders', 0)
-                # Short size: "151G" not "151.0 GiB"
                 sz = '0'
                 if size_h_raw:
                     parts = size_h_raw.split()
@@ -483,16 +399,14 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
                     sz = f'{num}{unit}'
                 print(f'  \u2717 {sz} | {d.get("title", "")} | seeds:{seed_raw}', file=sys.stderr, flush=True)
             continue
-        
-        # Sanitize magnet: remove any invalid tracker URLs (GitHub etc.)
+
+        # Sanitize magnet
         d['magnet'] = _sanitize_magnet(d.get('magnet', ''))
-        # Also update filtered (which may be a different dict)
         if 'magnet' in filtered:
             filtered['magnet'] = d['magnet']
-        
+
         out['found'] += 1
         out['found_any'] = True
-        # Capture best source on first match
         if best_src is None and r.source:
             best_src = r.source
             out['best_indices'].append(r.source)
@@ -507,10 +421,9 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
         q = filtered.get('_quality', {})
         qlabel = q.get('quality_label', '')
         size_h = bytes_to_human(size_bytes)
-        
+
         out['display_lines'].append(f"  \u2713 {title}")
         out['display_lines'].append(f"    {qlabel} ({size_h}) [{source}] seeds:{seeders}")
-        # Only show magnet on terminal when no -o (to avoid clutter)
         if magnet and not output_file:
             out['display_lines'].append(f"    {magnet}")
         out['torrents'].append({
@@ -523,12 +436,15 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             'magnet': magnet if magnet else '',
             '_quality': q,
         })
-        
-        # qb_add is handled below (best-mode or fallback)
-    
+
     out['filtered_count'] = all_filtered
-    
-    # ── Not best-mode: sort all results by score ──
+    return all_filtered, best_src, _fallback_candidates
+
+
+
+def _select_best_or_sort(out, best_mode, qb_add, qb_url, category, tags, output_file):
+    """In best-mode: pick single best result. In not-best-mode: sort by score."""
+    # Not best-mode: sort all results by score
     if not best_mode and out['torrents']:
         scored = [(t, _score_result(t)) for t in out['torrents']]
         scored.sort(key=lambda x: (_seeder_bucket(x[0]), -x[1]))
@@ -544,20 +460,18 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             out['display_lines'].append(f"    {qlabel} ({size_h}) seeds:{seeders}")
             if t.get('magnet') and not output_file:
                 out['display_lines'].append(f"    {t['magnet']}")
-    
-    # --- Best mode: select single best result ---
+
+    # Best mode: select single best result
     if best_mode and out['torrents']:
         scored = [(_score_result(t), t) for t in out['torrents']]
         scored.sort(key=lambda x: (_seeder_bucket(x[1]), -x[0]))
         best_score, best = scored[0]
-        
-        # Replace all torrents with just the best one
+
         out['torrents'] = [best]
         out['magnets'] = [best.get('magnet', '')] if best.get('magnet') else []
         out['found'] = 1
         out['total_size'] = best.get('size_bytes', 0)
-        
-        # Update display lines
+
         title = best.get('title', '')
         size_h = best.get('size_h', '')
         qlabel = best.get('quality_label', '')
@@ -566,40 +480,37 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             f"  \u2713 {title}",
             f"    {qlabel} ({size_h}) [best, score: {best_score:.0f}] seeds:{seeders}",
         ]
-        # Only show magnet on terminal when no -o
         if best.get('magnet') and not output_file:
             out['display_lines'].append(f"    {best['magnet']}")
-        
-        # Add best torrent to qB (with sanitization + duplicate check)
+
         if qb_add and best.get('magnet'):
             out['added'] = 1 if _safe_qb_add(best['magnet'], qb_url, category, tags) else 0
         else:
             out['added'] = 0
-    
-    # ── NOT best-mode: add all filtered to qB (with sanitization + duplicate check) ──
+
+    # Not best-mode: add all filtered to qB
     if not best_mode and qb_add:
         for t in out['torrents']:
             if t.get('magnet') and _safe_qb_add(t['magnet'], qb_url, category, tags):
                 out['added'] += 1
-    
-        
-    # ── Fallback: no results passed filters → return filtered-out items ──
-    # best_mode: pick single best;  not best_mode: return all (‑m behaviour)
-    # Skip fallback if a non-English language filter is active — returning
-    # results in the wrong language (e.g. Ukrainian when asking for Russian)
-    # is worse than returning nothing.
+
+
+
+def _handle_fallback(out, _fallback_candidates, filters, best_mode,
+                     qb_add, qb_url, category, tags, output_file, best_src):
+    """Handle fallback when no results pass filters. Returns updated best_src."""
+    # Skip fallback if a non-English language filter is active
     _skip_fallback = False
     _lang_filters = filters.get('lang', [])
     if _lang_filters and _lang_filters != ['en']:
         _skip_fallback = True
+
     if not out['torrents'] and _fallback_candidates and not _skip_fallback:
-        # Score all candidates
         scored = [(t, _score_result(t)) for t in _fallback_candidates]
         scored.sort(key=lambda x: (_seeder_bucket(x[0]), -x[1]))
-        
+
         if best_mode:
-            # Single best result
-            best, raw_score = scored[0]
+            best, _ = scored[0]
             size_bytes = best.get('size_bytes', 0)
             seeders = best.get('seeders', 0)
             source = best.get('source', '')
@@ -608,7 +519,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             size_h = bytes_to_human(size_bytes)
             title = best.get('title', '')
             magnet = best.get('magnet', '')
-            
+
             out['torrents'] = [{
                 'title': title, 'size_h': size_h, 'size_bytes': size_bytes,
                 'source': source, 'seeders': seeders,
@@ -625,24 +536,23 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             ]
             if magnet and not output_file:
                 out['display_lines'].append(f"    {magnet}")
-            
+
             if qb_add and magnet:
                 out['added'] = 1 if _safe_qb_add(magnet, qb_url, category, tags, paused=True) else 0
             else:
                 out['added'] = 0
-            
+
             if source:
                 best_src = source
                 out['best_indices'].append(source)
         else:
-            # All results mode (‑m): return all fallback candidates
             fb_list = []
             out['display_lines'] = [f"  \u26a0 {len(scored)} fallback results (filters did not match)"]
             out['found_any'] = True
             out['magnets'] = []
             out['total_size'] = 0
-            
-            for t, raw_score in scored:
+
+            for t, _ in scored:
                 size_bytes = t.get('size_bytes', 0)
                 seeders = t.get('seeders', 0)
                 source = t.get('source', '')
@@ -651,7 +561,7 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
                 size_h = bytes_to_human(size_bytes)
                 title = t.get('title', '')
                 magnet = t.get('magnet', '')
-                
+
                 fb_list.append({
                     'title': title, 'size_h': size_h, 'size_bytes': size_bytes,
                     'source': source, 'seeders': seeders,
@@ -663,39 +573,36 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
                 out['total_size'] += size_bytes
                 out['display_lines'].append(f"  \u26a0 {title}")
                 out['display_lines'].append(f"    {qlabel} ({size_h}) [{source}] seeds:{seeders}")
-            
+
             out['torrents'] = fb_list
             out['found'] = len(fb_list)
-            
             out['added'] = 0
             if qb_add:
                 for t in fb_list:
                     if t.get('magnet') and _safe_qb_add(t['magnet'], qb_url, category, tags, paused=True):
                         out['added'] += 1
-    
-    # best_src is captured during the filter loop
-    # It remains set for the status chars below
-    
-    # Update status chars after filtering
+
+    return best_src
+
+
+
+def _update_status_chars_and_print(status_chars, best_src, raw_counts, filtered_out,
+                                   results, out, query, query_num, total_queries, verbose):
+    """Update status chars and print final line."""
     for i, name in enumerate(TRACKER_ORDER):
         current = status_chars[i]
         if current == '!':
-            continue  # keep error marker
+            continue
         raw = raw_counts.get(name, 0)
         filt = filtered_out.get(name, 0)
         passed = raw - filt
         if passed > 0:
-            if name == best_src:
-                status_chars[i] = '*'
-            else:
-                status_chars[i] = '+'
+            status_chars[i] = '*' if name == best_src else '+'
         elif raw > 0:
-            status_chars[i] = 'x'  # all filtered
-        elif current == '?':
-            # Tracker had no results but no error either
             status_chars[i] = 'x'
-    
-    # Print final line (with seeders of selected torrent if available)
+        elif current == '?':
+            status_chars[i] = 'x'
+
     if not verbose:
         qdisp = query[:50] + '...' if len(query) > 50 else query
         chars = ''.join(status_chars)
@@ -704,18 +611,88 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
             _best_seeds = out['torrents'][0].get('seeders', 0)
             _best_size = out['torrents'][0].get('size_bytes', 0)
             _size_h = bytes_to_human(_best_size) if _best_size else ''
-            if _size_h:
-                _suffix = f' (seeds: {_best_seeds}, size: {_size_h})'
-            else:
-                _suffix = f' (seeds: {_best_seeds})'
+            _suffix = f' (seeds: {_best_seeds}, size: {_size_h})' if _size_h else f' (seeds: {_best_seeds})'
         print(f'\r[{query_num}/{total_queries}] {qdisp}  {chars}{_suffix}\033[K', file=sys.stderr, flush=True)
     else:
-        # Verbose footer: summary line
         total_raw = len(results)
         total_found = out['found']
         total_filtered = out['filtered_count']
         print(f'  \u2192 {total_found} matches after filters  ({total_raw} total, {total_filtered} removed)',
               file=sys.stderr)
-    
-    
+
+
+def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
+                           qb_url: str = settings.DEFAULT_QB_URL,
+                           category: str = '', tags: str = '',
+                           output_file: str = '',
+                           verbose: bool = False,
+                           show_tracker_titles: bool = False,
+                           query_num: int = 1,
+                           total_queries: int = 1,
+                           trackers: list = None,
+                           best_mode: bool = True) -> dict:
+    """Internal: search all trackers, filter, optionally add to qBittorrent.
+    Returns dict with {found, added, total_size, magnets, display_lines, found_any,
+                        filtered_count, best_indices}."""
+
+    # Track per-tracker state for progress
+    status_chars = ['?'] * len(TRACKER_ORDER)
+    tracker_results = {}
+    tracker_errors = {}
+
+    progress_cb = _make_progress_cb(query_num, total_queries, query,
+                                     verbose, status_chars,
+                                     tracker_results, tracker_errors)
+
+    if verbose:
+        print(f'[{query_num}/{total_queries}] {query}', file=sys.stderr)
+
+    if show_tracker_titles and query_num == 1:
+        for name in TRACKER_ORDER:
+            print(TRACKER_LABELS.get(name, name), file=sys.stderr)
+
+    enriched = enrich_query(query, api_key=filters.get('tmdb_key', '')) if filters.get('tmdb_enrich', True) else query
+    results = search_all(enriched, trackers=trackers, progress_cb=progress_cb)
+
+    query_series = extract_series_name_from_query(query)
+
+    out = {
+        'found': 0, 'added': 0, 'total_size': 0,
+        'magnets': [], 'torrents': [], 'display_lines': [],
+        'found_any': False, 'filtered_count': 0, 'best_indices': [],
+    }
+
+    # Group results by source tracker
+    grouped: dict = {}
+    for r in results:
+        src = r.source
+        if src not in grouped:
+            grouped[src] = []
+        grouped[src].append(r)
+
+    raw_counts = {}
+    filtered_out = {}
+    for name in TRACKER_ORDER:
+        raw_counts[name] = len(grouped.get(name, []))
+        filtered_out[name] = 0
+
+    # Enrichment cache shared across the filter loop
+    _enrich_cache = {}
+
+    # ── Step 1: filter and score results ──
+    _, best_src, _fallback_candidates = _filter_and_score_results(
+        results, filters, query, query_series, out,
+        verbose, output_file, filtered_out, _enrich_cache)
+
+    # ── Step 2: best-mode or sort ──
+    _select_best_or_sort(out, best_mode, qb_add, qb_url, category, tags, output_file)
+
+    # ── Step 3: fallback handling ──
+    best_src = _handle_fallback(out, _fallback_candidates, filters, best_mode,
+                                qb_add, qb_url, category, tags, output_file, best_src)
+
+    # ── Step 4: status chars and final print ──
+    _update_status_chars_and_print(status_chars, best_src, raw_counts, filtered_out,
+                                   results, out, query, query_num, total_queries, verbose)
+
     return out

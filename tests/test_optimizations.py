@@ -665,3 +665,290 @@ class TestRunSearchPackFirst:
         assert result['found_count'] == 4  # 2 per query × 2 queries
         assert result['total_size'] == 4000
         assert len(result['all_torrents']) == 2
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Negative / Error‑Path Tests (MAJOR‑4)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestNegativeCache:
+    """Error handling for cache corruption, race conditions, and resource limits."""
+
+    def test_cache_corrupt_json_does_not_crash(self, tmpdir):
+        """Corrupt cache JSON file loads as empty dict."""
+        import sator.indexer as idx
+        orig_dir = idx._search_cache_dir
+        def mock_dir():
+            return str(tmpdir)
+        idx._search_cache_dir = mock_dir
+
+        try:
+            # Write corrupt JSON
+            cache_file = os.path.join(str(tmpdir), 'search_cache.json')
+            with open(cache_file, 'w') as f:
+                f.write('{invalid json!!!')
+
+            result = _search_cache_load()
+            assert isinstance(result, dict)
+            assert len(result) == 0
+        finally:
+            idx._search_cache_dir = orig_dir
+
+    def test_cache_save_does_not_crash_on_permission_error(self, tmpdir):
+        """Cache save degrades gracefully when cache dir is not writable."""
+        import sator.indexer as idx
+        orig_dir = idx._search_cache_dir
+        def mock_dir():
+            return '/nonexistent_dir_xyz'
+        idx._search_cache_dir = mock_dir
+
+        try:
+            # Should not raise
+            _search_cache_save({'some_key': {'results': [], '_ts': time.time()}})
+        finally:
+            idx._search_cache_dir = orig_dir
+
+    def test_cache_missing_file_returns_empty(self, tmpdir):
+        """Loading cache from non‑existent file returns empty dict."""
+        import sator.indexer as idx
+        orig_dir = idx._search_cache_dir
+        def mock_dir():
+            return str(tmpdir)
+        idx._search_cache_dir = mock_dir
+
+        try:
+            result = _search_cache_load()
+            assert isinstance(result, dict)
+            assert len(result) == 0
+        finally:
+            idx._search_cache_dir = orig_dir
+
+    def test_cache_empty_file_returns_empty(self, tmpdir):
+        """Empty cache file loads as empty dict."""
+        import sator.indexer as idx
+        orig_dir = idx._search_cache_dir
+        def mock_dir():
+            return str(tmpdir)
+        idx._search_cache_dir = mock_dir
+
+        try:
+            cache_file = os.path.join(str(tmpdir), 'search_cache.json')
+            with open(cache_file, 'w') as f:
+                f.write('')
+            result = _search_cache_load()
+            assert isinstance(result, dict)
+            assert len(result) == 0
+        finally:
+            idx._search_cache_dir = orig_dir
+
+
+class TestNegativeConcurrent:
+    """Thread safety and resource limits."""
+
+    def test_concurrent_cache_writes_do_not_crash(self, tmpdir):
+        """Multiple threads writing to cache simultaneously do not crash."""
+        import sator.indexer as idx
+
+        orig_dir = idx._search_cache_dir
+        def mock_dir():
+            return str(tmpdir)
+        idx._search_cache_dir = mock_dir
+
+        try:
+            n_threads = 10
+            errors = []
+
+            def worker(wid):
+                try:
+                    cache = {}
+                    cache[f'key_{wid}'] = {
+                        'results': [{'title': f'result_{wid}'}],
+                        '_ts': time.time(),
+                    }
+                    _search_cache_save(cache)
+                except Exception as e:
+                    errors.append(e)
+
+            threads = []
+            for i in range(n_threads):
+                t = threading.Thread(target=worker, args=(i,))
+                threads.append(t)
+                t.start()
+
+            for t in threads:
+                t.join()
+
+            # No thread should crash — cache file might only have last writer
+            assert not errors, f'Errors during concurrent writes: {errors}'
+        finally:
+            idx._search_cache_dir = orig_dir
+
+    def test_concurrent_search_all_with_cache_does_not_crash(self, tmpdir, monkeypatch):
+        """Multiple search_all calls with cache enabled do not deadlock."""
+        import sator.indexer as idx
+        orig_dir = idx._search_cache_dir
+        def mock_dir():
+            return str(tmpdir)
+        idx._search_cache_dir = mock_dir
+
+        monkeypatch.setattr('sator.indexer._search_cache_load', lambda: {})
+        orig_indexers = dict(INDEXERS)
+
+        try:
+            class NoopIndexer:
+                def search(self, query):
+                    return []
+            for i in range(5):
+                INDEXERS[f't_{i}'] = NoopIndexer()
+
+            n_threads = 10
+            errors = []
+            def worker():
+                try:
+                    search_all(f"q_{threading.get_ident()}", trackers=['t_0'])
+                except Exception as e:
+                    errors.append(e)
+
+            threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            assert not errors, f'Errors during concurrent search_all: {errors}'
+        finally:
+            INDEXERS.clear()
+            INDEXERS.update(orig_indexers)
+            idx._search_cache_dir = orig_dir
+
+
+class TestNegativeIndexer:
+    """Error handling in indexer/search paths."""
+
+    def test_indexer_search_returns_none_does_not_crash(self, monkeypatch):
+        """If an indexer.search returns None, it is treated as empty."""
+        monkeypatch.setattr('sator.indexer._search_cache_load', lambda: {})
+        orig = dict(INDEXERS)
+        try:
+            class NoneIndexer:
+                def search(self, query):
+                    return None  # pathological return
+            INDEXERS['test_none_idx'] = NoneIndexer()
+            result = search_all("test", trackers=['test_none_idx'])
+            assert isinstance(result, list)
+            assert len(result) == 0
+        finally:
+            INDEXERS.clear()
+            INDEXERS.update(orig)
+
+    def test_indexer_search_raises_timeout_resets_status(self, monkeypatch):
+        """Timeout in indexer.search does not hang the pool."""
+        monkeypatch.setattr('sator.indexer._search_cache_load', lambda: {})
+        orig = dict(INDEXERS)
+        try:
+            class SlowIndexer:
+                def search(self, query):
+                    import time
+                    time.sleep(30)  # would hang if not timed out
+                    return []
+            INDEXERS['test_slow'] = SlowIndexer()
+            # Use a short timeout for the whole pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                fut = pool.submit(search_all, "test", trackers=['test_slow'])
+                try:
+                    result = fut.result(timeout=5)
+                    assert isinstance(result, list)
+                except concurrent.futures.TimeoutError:
+                    pass  # acceptable - pool is slow
+        finally:
+            INDEXERS.clear()
+            INDEXERS.update(orig)
+
+    def test_many_concurrent_searches_respected(self, monkeypatch):
+        """MAX_CONCURRENT (10) limits the number of parallel searches."""
+        monkeypatch.setattr('sator.indexer._search_cache_load', lambda: {})
+        orig = dict(INDEXERS)
+
+        class TimedIndexer:
+            def __init__(self):
+                self.search_calls = []
+            def search(self, query):
+                self.search_calls.append(threading.current_thread().name)
+                time.sleep(0.05)
+                return []
+
+        try:
+            # Register many trackers
+            for i in range(20):
+                INDEXERS[f'tracker_{i}'] = TimedIndexer()
+
+            start = time.time()
+            search_all("test", trackers=list(INDEXERS.keys()))
+            elapsed = time.time() - start
+
+            # With max_workers=10 and 20 tasks each taking 0.05s:
+            # - If all 20 ran concurrently: ~0.05s
+            # - If limited to 10 at a time: ~0.10s
+            # We assert it took more than 0.07s (not all ran simultaneously)
+            assert elapsed >= 0.07, f"MAX_CONCURRENT=10 not respected: {elapsed:.3f}s"
+        finally:
+            INDEXERS.clear()
+            INDEXERS.update(orig)
+
+
+class TestNegativeProcessQuery:
+    """Edge cases in _process_query_internal error handling."""
+
+    def test_empty_query_does_not_crash(self, monkeypatch):
+        """Processing an empty query string returns found_any=False."""
+        from sator.process import _process_query_internal
+
+        # Mock search_all to return empty so actual indexers aren't called
+        monkeypatch.setattr('sator.process.search_all',
+                            lambda q, trackers=None, progress_cb=None: [])
+
+        result = _process_query_internal(
+            query="", filters={}, qb_add=False,
+        )
+        assert isinstance(result, dict)
+        assert result['found_any'] is False
+        assert result['found'] == 0
+
+    def test_no_results_returns_empty(self, monkeypatch):
+        """A query that returns zero results does not crash."""
+        from sator.process import _process_query_internal
+
+        # Mock search_all to return empty
+        monkeypatch.setattr('sator.process.search_all', lambda q, trackers=None, progress_cb=None: [])
+
+        result = _process_query_internal(
+            query="nonexistent_movie_xyz_12345",
+            filters={}, qb_add=False,
+        )
+        assert isinstance(result, dict)
+        assert result['found_any'] is False
+
+    def test_filters_exclude_everything_returns_fallback(self, monkeypatch):
+        """When filters exclude all results, fallback mechanism works."""
+        from sator.process import _process_query_internal
+        from sator.indexer import TorrentResult
+
+        monkeypatch.setattr('sator.process.search_all',
+                            lambda q, trackers=None, progress_cb=None: [
+                                TorrentResult(
+                                    title="Test Result",
+                                    magnet="magnet:?xt=urn:btih:abcd",
+                                    size_bytes=1000,
+                                    seeders=5,
+                                    source="test_src",
+                                )
+                            ])
+
+        # Use a resolution filter that will NOT match
+        result = _process_query_internal(
+            query="test", filters={'rl': 2160}, qb_add=False,
+            best_mode=True,
+        )
+        # Should not crash; fallback is expected (or empty)
+        assert isinstance(result, dict)

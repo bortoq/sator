@@ -136,3 +136,35 @@
 - **18 new tests** for normalizer (`test_normalizer.py`).
 - **7 new tests** for TMDB episode titles (`test_tmdb_episodes.py`).
 - Total: 147 tests (all passing).
+
+### Breaking Changes (v0.5.0)
+
+- **`-T` / `--trackers` flag removed**. All 13 built‑in indexers are always searched.
+  The `DEFAULT_TRACKERS` list in `settings.py` contains the full set.
+- **`-n` / `--normalize` flag and template system removed**. The `sator/normalizer.py`
+  module, `TEMPLATE_MOVIE`, `TEMPLATE_SERIES`, `NORMALIZE_ENABLED`, and `SIDECAR_ENABLED`
+  settings are deleted. Torrents are no longer renamed automatically.
+- **`DEFAULT_TRACKERS` restored** to the original 13 indexers that existed before the
+  0.4.0 expansion (limetorrents, yts, solidtorrents, eztw, tgx readded).
+
+### Internal
+
+- **MAJOR-2**: `_run_search` (runner.py) split into 6 module‑level functions:
+  `_build_filters`, `_attach_series_context`, `_process_pack_query`, `_run_phase2`,
+  `_compare_seasons`, and `_run_search` itself (now an orchestrator).
+  Cyclomatic complexity reduced from 72 to well below 20 per function.
+- **MAJOR-3**: `_process_query_internal` (process.py) split into 4 module‑level functions:
+  `_filter_and_score_results`, `_select_best_or_sort`, `_handle_fallback`,
+  and `_update_status_chars_and_print`. The main function is now 60 lines of orchestration.
+  Cyclomatic complexity reduced from 64.
+- **`bytes_to_human` import removed** from `runner.py` (unused).
+
+### Tests
+
+- **12 new negative tests** (MAJOR‑4):
+  - Cache corruption (corrupt JSON, missing file, empty file, unwritable dir)
+  - Thread safety (concurrent cache reads/writes, concurrent `search_all` calls)
+  - Resource limits (`MAX_CONCURRENT=10` respected)
+  - Indexer edge cases (returning `None`, timeout, slow indexer)
+  - Process edge cases (empty query, no results, all results filtered)
+- Total: 296 tests (all passing).
