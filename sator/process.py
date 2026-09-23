@@ -2,6 +2,7 @@
 """Internal process-query orchestration."""
 
 import sys
+import time
 from dataclasses import asdict
 from sator.indexer import search_all, _enrich_from_detail
 from sator.filter import filter_result_json
@@ -12,6 +13,7 @@ from sator.tmdb import enrich_query
 from sator.quality import parse_quality
 from sator.language import parse_languages
 from sator.exclude import is_excluded
+from sator.dedup import deduplicate_torrents
 from sator.series_match import extract_series_name_from_query, extract_series_name_from_title, series_name_matches, season_ep_in_query_matches_title
 
 
@@ -318,13 +320,26 @@ def _filter_and_score_results(results, filters, query, query_series, out,
     all_filtered = 0
     best_src = None
     _fallback_candidates = []
+    enrich_deadline = time.monotonic() + settings.DETAIL_ENRICH_BUDGET
+    enrich_attempts = 0
 
     def _try_enrich(r, d):
-        """Fetch detail page once per URL, inject subs/languages into title."""
+        """Fetch detail metadata only when it can resolve a language rejection."""
+        nonlocal enrich_attempts
         if not r.info_url:
             return d
         if r.info_url not in _enrich_cache:
-            _enrich_cache[r.info_url] = _enrich_from_detail(r)
+            if not (filters.get('lang') or filters.get('subs')):
+                return d
+            other_filters = {k: v for k, v in filters.items() if k not in ('lang', 'subs')}
+            if not filter_result_json(dict(d), other_filters):
+                return d
+            remaining = enrich_deadline - time.monotonic()
+            if enrich_attempts >= settings.DETAIL_ENRICH_MAX_PAGES or remaining <= 0:
+                return d
+            enrich_attempts += 1
+            timeout = min(settings.DETAIL_ENRICH_REQUEST_TIMEOUT, remaining)
+            _enrich_cache[r.info_url] = _enrich_from_detail(r, timeout=timeout)
         enriched = _enrich_cache[r.info_url]
         if not enriched:
             return d
@@ -335,7 +350,8 @@ def _filter_and_score_results(results, filters, query, query_series, out,
             d2['_enriched_subs'] = enriched['subs']
         return d2
 
-    for r in results:
+    # Spend the bounded enrichment budget on the best seeded candidates first.
+    for r in sorted(results, key=lambda item: item.seeders, reverse=True):
         d = asdict(r)
         d['quality'] = asdict(r.quality)
         d['languages'] = r.languages
@@ -456,13 +472,15 @@ def _filter_and_score_results(results, filters, query, query_series, out,
 
 def _select_best_or_sort(out, best_mode, qb_add, qb_url, category, tags, output_file):
     """In best-mode: pick single best result. In not-best-mode: sort by seeders."""
-    # ``-m`` is intended to show the most well-seeded results first.  Keep the
+    # ``-m`` is intended to show the most well-seeded results first. Keep the
     # score as a tie-breaker, but never let it move a result with fewer
     # seeders ahead of one with more seeders.
     if not best_mode and out['torrents']:
-        scored = [(t, _score_result(t)) for t in out['torrents']]
+        scored = [(t, _score_result(t)) for t in deduplicate_torrents(out['torrents'])]
         scored.sort(key=lambda x: (-x[0].get('seeders', 0), -x[1]))
         out['torrents'] = [t for t, _ in scored]
+        out['found'] = len(out['torrents'])
+        out['total_size'] = sum(t.get('size_bytes', 0) for t in out['torrents'])
         out['magnets'] = [t.get('magnet', '') for t in out['torrents'] if t.get('magnet')]
         out['display_lines'] = []
         for t in out['torrents']:
@@ -501,14 +519,6 @@ def _select_best_or_sort(out, best_mode, qb_add, qb_url, category, tags, output_
             out['added'] = 1 if _safe_qb_add(best['magnet'], qb_url, category, tags) else 0
         else:
             out['added'] = 0
-
-    # Not best-mode: add all filtered to qB
-    if not best_mode and qb_add:
-        for t in out['torrents']:
-            if t.get('magnet') and _safe_qb_add(t['magnet'], qb_url, category, tags):
-                out['added'] += 1
-
-
 
 def _handle_fallback(out, _fallback_candidates, filters, best_mode,
                      qb_add, qb_url, category, tags, output_file, best_src):
@@ -561,14 +571,16 @@ def _handle_fallback(out, _fallback_candidates, filters, best_mode,
                 out['best_indices'].append(source)
         else:
             fb_list = []
-            out['display_lines'] = [f"  \u26a0 {len(scored)} fallback results (filters did not match)"]
             out['found_any'] = True
             out['magnets'] = []
             out['total_size'] = 0
 
             # Fallback results are also part of ``-m`` output, so use the
             # same strict descending seeder order here.
+            scored = [(t, _score_result(t)) for t in
+                      deduplicate_torrents(_fallback_candidates)]
             scored.sort(key=lambda x: (-x[0].get('seeders', 0), -x[1]))
+            out['display_lines'] = [f"  ⚠ {len(scored)} fallback results (filters did not match)"]
             for t, _ in scored:
                 size_bytes = t.get('size_bytes', 0)
                 seeders = t.get('seeders', 0)
@@ -594,10 +606,6 @@ def _handle_fallback(out, _fallback_candidates, filters, best_mode,
             out['torrents'] = fb_list
             out['found'] = len(fb_list)
             out['added'] = 0
-            if qb_add:
-                for t in fb_list:
-                    if t.get('magnet') and _safe_qb_add(t['magnet'], qb_url, category, tags, paused=True):
-                        out['added'] += 1
 
     return best_src
 
@@ -651,6 +659,9 @@ def _process_query_internal(query: str, filters: dict, qb_add: bool = False,
     """Internal: search all trackers, filter, optionally add to qBittorrent.
     Returns dict with {found, added, total_size, magnets, display_lines, found_any,
                         filtered_count, best_indices}."""
+
+    if not best_mode:
+        qb_add = False
 
     # Track per-tracker state for progress
     status_chars = ['?'] * len(TRACKER_ORDER)

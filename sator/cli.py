@@ -10,7 +10,7 @@ import time
 from typing import List, Optional
 from sator.size import parse_size, bytes_to_human
 from sator.wikidata import get_wikidata_original_lang
-from sator.iso_langs import iso_name
+from sator.iso_langs import iso_name, iso_lookup
 from sator.qb_client import _qb_add_simple
 from sator import settings
 from sator.queries import _build_queries
@@ -51,14 +51,46 @@ def _parse_cmd_run_args(args: List[str]) -> tuple:
         args = ['--help']
     args = ['--help' if a == '-help' else a for a in args]
     import argparse as ap
-    parser = ap.ArgumentParser(prog='sator', add_help=False)
+    parser = ap.ArgumentParser(prog='sator', add_help=False, allow_abbrev=False)
+
+    # argparse treats -s as an abbreviation of -sn even with allow_abbrev=False.
+    # Extract numeric season specifications before parsing positional queries.
+    normalized = []
+    season_specs = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ('-s', '--search') or arg.startswith(('-s=', '--search=')):
+            parser.error('-s/--search was removed; pass the search query as a positional argument')
+        if arg in ('-sn', '--season-number'):
+            spec = []
+            i += 1
+            while i < len(args) and re.fullmatch(r'\d+', args[i]):
+                spec.append(args[i])
+                i += 1
+            season_specs.append(spec)
+            continue
+        if arg in ('-l', '--lang', '-t', '--subs'):
+            # A bare -l/-t means original language; a following movie title
+            # must remain positional rather than becoming a language value.
+            if (i + 1 >= len(args) or
+                    (args[i + 1] != '__original__' and not iso_lookup(args[i + 1]))):
+                normalized.append(arg + '=__original__')
+                i += 1
+                continue
+        normalized.append(arg)
+        i += 1
     
-    # Search sources
-    parser.add_argument('-s', '--search', action='append', default=[], dest='search_strings')
+    # Search sources. Queries and input files are positional so the common
+    # invocation reads naturally: sator "John Wick (2014)" -m.
+    parser.add_argument('search_strings', nargs='*',
+                       help='Search query or file path (one query per line)')
     
     # Auto-add mode
-    parser.add_argument('-a', '--auto-add', nargs='?', const='__flag__', default=None,
-                       help='Auto-add to qBittorrent. Optional: path to magnet file')
+    parser.add_argument('-a', '--auto-add', action='store_true',
+                       help='Auto-add the best search result to qBittorrent')
+    parser.add_argument('--add-file', default='', metavar='FILE',
+                       help='Add magnet links from FILE to qBittorrent')
     
     # Resolution filters
     parser.add_argument('-rl', type=str, default=None)
@@ -76,7 +108,8 @@ def _parse_cmd_run_args(args: List[str]) -> tuple:
 
     # qBittorrent options
     parser.add_argument('--category', default='')
-    parser.add_argument('--tags', nargs='+', default=None)
+    parser.add_argument('--tags', action='append', default=None,
+                       help='Tags for qBittorrent; quote multiple words')
     parser.add_argument('--qb-url', default=settings.DEFAULT_QB_URL)
     
     # Output file for magnet links
@@ -91,8 +124,6 @@ def _parse_cmd_run_args(args: List[str]) -> tuple:
                        help='Show all filtered results instead of best one')
     parser.add_argument('-e', '--exclude', type=str, default='',
                        help='Exclude patterns (comma-separated, e.g. CAM,TS,SCR)')
-    parser.add_argument('-sn', '--season-number', nargs='*', default=None, action='append',
-                       help='Season number (repeatable, no value = all seasons)')
     parser.add_argument('--no-enrich', action='store_false', dest='enrich', default=True,
                        help='Disable TMDB enrichment')
     parser.add_argument('--no-episode-expansion', action='store_true', default=False,
@@ -103,11 +134,25 @@ def _parse_cmd_run_args(args: List[str]) -> tuple:
     parser.add_argument('-h', '--help', action='store_true')
     
     try:
-        parsed = parser.parse_args(args)
+        parsed = parser.parse_intermixed_args(normalized)
     except SystemExit as e:
         sys.exit(e.code)
     
     # Apply built-in defaults
+    parsed.season_number = season_specs or None
+    # Keep the documented legacy `sator -a magnets.txt` import form, while
+    # `sator -a "Movie title"` remains a search regardless of flag order.
+    if (parsed.auto_add and args[0] in ('-a', '--auto-add') and
+            len(parsed.search_strings) == 1 and
+            os.path.isfile(parsed.search_strings[0])):
+        try:
+            with open(parsed.search_strings[0]) as source:
+                first_entry = next((line.strip() for line in source
+                                    if line.strip() and not line.lstrip().startswith('#')), '')
+            if first_entry.startswith('magnet:'):
+                parsed.add_file = parsed.search_strings.pop()
+        except OSError:
+            pass
     parsed = apply_defaults(parsed)
     tags_str = ' '.join(parsed.tags) if parsed.tags else ''
     
@@ -117,7 +162,7 @@ def _parse_cmd_run_args(args: List[str]) -> tuple:
 
 def _direct_download_mode(parsed: argparse.Namespace, tags_str: str):
     """Handle direct download mode (-a file): read magnets from file and add to qB."""
-    auto_file = parsed.auto_add if parsed.auto_add != '__flag__' else ''
+    auto_file = parsed.add_file
     other_keys = []
     if parsed.rl: other_keys.append('-rl')
     if parsed.rb: other_keys.append('-rb')
@@ -151,21 +196,22 @@ def cmd_run(args: List[str]):
         print("""
 SATOR. multi-tracker torrent search with qBittorrent integration
 
-Usage: sator [options]
+Usage: sator [QUERY|FILE ...] [options]
 
 Search:
-  -s, --search QUERY|FILE   Search by query string or file path
+  QUERY|FILE                Search query or file path (one query per line)
   -sn [S] [E] [E] .. [E]    Season number (repeatable, no value = all seasons)
   -e, --exclude PATTERNS    Exclude patterns, comma-separated (CAM,TS,SCR...)
   -l [LANG]                 Audio language (ISO 639-1 code or name)
   -t [LANG]                 Subtitle language (ISO 639-1 code or name)
-  -a, --auto-add [FILE]     Auto-add to qBittorrent
+  -a, --auto-add            Auto-add the best search result to qBittorrent
+  --add-file FILE           Add magnet links from FILE to qBittorrent
   -m, --more                Show all filtered results (default: best only)
   -o, --output FILE         Save magnet links to FILE
   -v, --verbose             Show per-tracker results during search
   -tt, --tracker-titles     Show tracker names before first search
   --category CAT            Category for added torrents
-  --tags TAGS               Space-separated tags
+  --tags TAGS               Tags for qBittorrent (quote multiple words)
   --qb-url URL              qBittorrent WebUI URL (default: http://localhost:8090)
   --no-enrich               Disable TMDB enrichment
   --no-episode-expansion    Disable automatic episode-level expansion
@@ -181,10 +227,20 @@ Filters (each at most once):
     
     # ── Resolve modes ──────────────────────────────────────────────────────
     has_search = bool(parsed.search_strings)
-    auto_add = parsed.auto_add is not None
-    auto_file = ""
-    if auto_add and parsed.auto_add != '__flag__':
-        auto_file = parsed.auto_add
+    auto_add = parsed.auto_add
+    if parsed.more and auto_add:
+        print('⚠ -a is ignored with -m: listing all results will not add torrents to qBittorrent.',
+              file=sys.stderr)
+        auto_add = False
+    if parsed.more and parsed.add_file:
+        print('✖ --add-file cannot be combined with -m.', file=sys.stderr)
+        sys.exit(2)
+    if has_search and parsed.add_file:
+        print('✖ --add-file cannot be combined with a search query.', file=sys.stderr)
+        sys.exit(2)
+    parsed.search_strings = [re.sub(r'\\([ ()])', r'\1', query)
+                             for query in parsed.search_strings]
+    auto_file = parsed.add_file
     
     
     # ── Direct download mode ───────────────────────────────────────────────
@@ -219,7 +275,7 @@ Filters (each at most once):
             _clean_q = re.sub(r'\s+S\d{2,}(E\d{2,})?$', '', q).strip()
             if not _clean_q:
                 _clean_q = q
-            iso = get_wikidata_original_lang(_clean_q, lang_cache)
+            iso = get_wikidata_original_lang(_clean_q, lang_cache, verbose=parsed.verbose)
             if iso:
                 orig_lang_map[q] = iso
                 name = iso_name(iso) or iso
@@ -334,13 +390,6 @@ def _main():
         cmd_run(['--help'])
         return
 
-    command = sys.argv[1]
-    cmd_args = sys.argv[2:]
-
-    if command.startswith('-'):
-        cmd_run(sys.argv[1:])
-        return
-
     commands = {
         'parse-languages': cmd_parse_languages,
         'parse-quality': cmd_parse_quality,
@@ -356,9 +405,12 @@ def _main():
         'filter': cmd_filter,
     }
 
+    command = sys.argv[1]
+    cmd_args = sys.argv[2:]
+
     if command in commands:
         commands[command](cmd_args)
     else:
-        print(json.dumps({"error": f"Unknown command: {command}. Use 'run --help' for usage."}),
-              file=sys.stderr)
-        sys.exit(1)
+        # Any non-command first argument is the positional search query. This
+        # is important for titles such as "Slide 2023".
+        cmd_run(sys.argv[1:])

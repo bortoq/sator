@@ -10,6 +10,7 @@ from sator.process import _process_query_internal
 from sator.qb_client import _qb_add_simple
 from sator.series import pick_series_best, make_series_tag
 from sator.size import parse_size
+from sator.dedup import deduplicate_torrents
 
 
 def _res_int(val):
@@ -33,12 +34,13 @@ def _size_bytes(val):
 
 def _build_filters(parsed, q, orig_lang_map, lang_filters, subs_filters, has_original_subs):
     """Build filters dict from parsed args and language context."""
+    original_lang = orig_lang_map.get(q) or orig_lang_map.get(re.sub(r'E\d{2,}$', '', q))
     current_lang = list(lang_filters)
-    if q in orig_lang_map and orig_lang_map[q]:
-        current_lang.append(orig_lang_map[q])
+    if original_lang:
+        current_lang.append(original_lang)
     current_subs = list(subs_filters)
-    if has_original_subs and q in orig_lang_map and orig_lang_map[q]:
-        current_subs.append(orig_lang_map[q])
+    if has_original_subs and original_lang:
+        current_subs.append(original_lang)
 
     filters = {}
     rl = _res_int(parsed.rl)
@@ -257,6 +259,8 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
       not_found_items, start_time, _series_pack_results, _series_ep_results
     """
     total = len(queries)
+    if parsed.more:
+        auto_add = False
     start_time = time.time()
 
     # Use lists as mutable accumulators so sub-functions can update them
@@ -292,12 +296,14 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
     # ``-m`` promises a single ordering across all queries, not just within
     # each query's tracker results.
     if parsed.more:
+        all_torrents = deduplicate_torrents(all_torrents)
         all_torrents.sort(key=lambda t: -t.get('seeders', 0))
 
     return {
-        'found_count': sum(found_count),
+        'found_count': len(all_torrents) if parsed.more else sum(found_count),
         'added_count': sum(added_count),
-        'total_size': sum(total_size_val),
+        'total_size': (sum(t.get('size_bytes', 0) for t in all_torrents)
+                       if parsed.more else sum(total_size_val)),
         'all_torrents': all_torrents,
         'not_found_items': not_found_items,
         'start_time': start_time,

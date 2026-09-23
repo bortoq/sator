@@ -157,6 +157,11 @@ TIMEOUT_RUTOR = 15
 # These affect startup time (Wikidata/TMDB) and enrichment (TMDB).
 TIMEOUT_TMDB = 10
 TIMEOUT_WIKIDATA = 10
+WIKIDATA_LOOKUP_BUDGET = 8     # Stop starting requests after this soft deadline
+WIKIDATA_LOOKUP_REQUEST_TIMEOUT = 3
+DETAIL_ENRICH_BUDGET = 8       # Total extra detail-page time per query
+DETAIL_ENRICH_MAX_PAGES = 5
+DETAIL_ENRICH_REQUEST_TIMEOUT = 2
 TIMEOUT_QB = 15               # qBittorrent Web UI (add magnet, get status)
 TIMEOUT_QB_SIMPLE = 10        # qBittorrent simple health-check call
 
@@ -180,6 +185,9 @@ GLOTORRENTS_BASE_URL = 'https://glodls.to'
 # SolidTorrents API endpoint. The query term is appended to this URL.
 SOLIDTORRENTS_API_URL = 'https://solidtorrents.to/api/v1/search?q='
 
+# YTS official domain listed by its status service; yts.mx no longer resolves.
+YTS_API_BASE_URL = 'https://yts.bz'
+
 # EZTV base URL -- used for TV show episode search.
 EZTV_BASE_URL = 'https://eztvx.to'
 
@@ -199,7 +207,7 @@ RUTOR_ANIME_CATEGORY = 10    # Category id used for anime search on rutor
 UA_INDEXER = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
 
 # User-Agent sent when making general HTTP requests from sator.
-UA_SATOR = 'sator/0.1'
+UA_SATOR = f'sator/{__version__} (https://github.com/bortoq/sator)'
 
 # User-Agent sent to TMDB API.
 UA_TMDB = 'sator/0.3'

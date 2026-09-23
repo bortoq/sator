@@ -26,41 +26,51 @@ class QBClient:
         """Make an API call to qBittorrent."""
         url = f"{self.config.url.rstrip('/')}/api/v2/{endpoint.lstrip('/')}"
         encoded = urllib.parse.urlencode(data or {})
-        req = urllib.request.Request(url, data=encoded.encode() if data else None,
-                                     method=method)
-        req.add_header('User-Agent', settings.UA_SATOR)
-        if self._cookie:
-            req.add_header('Cookie', self._cookie)
-
-        try:
-            # Auth first if needed
-            if self.config.username and not self._cookie:
-                self._auth()
-
-            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_QB)
-            if endpoint == 'auth/login':
-                self._cookie = resp.headers.get('Set-Cookie', '')
-            body = resp.read().decode()
-            if body:
-                return json.loads(body)
-            return {}
-        except urllib.error.HTTPError as e:
-            if e.code == 403 and self.config.username and not getattr(self, '_auth_attempted', False):
-                self._auth_attempted = True
-                self._auth()
-                result = self._api_call(method, endpoint, data)
-                self._auth_attempted = False
-                return result
-            return {"error": str(e)}
-        except Exception as e:
-            return {"error": str(e)}
+        if method.upper() == 'GET' and encoded:
+            url += '?' + encoded
+        for attempt in range(2):
+            if self.config.username and not self._cookie and endpoint != 'auth/login':
+                if not self._auth():
+                    return {"error": "qBittorrent authentication failed"}
+            req = urllib.request.Request(
+                url, data=encoded.encode() if method.upper() != 'GET' and data else None,
+                method=method)
+            req.add_header('User-Agent', settings.UA_SATOR)
+            if self._cookie:
+                req.add_header('Cookie', self._cookie)
+            try:
+                resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_QB)
+                body = resp.read().decode()
+                if endpoint == 'auth/login':
+                    self._cookie = resp.headers.get('Set-Cookie', '').split(';', 1)[0]
+                    return {} if body.strip() == 'Ok.' else {"error": body.strip()}
+                return json.loads(body) if body else {}
+            except urllib.error.HTTPError as exc:
+                if exc.code == 403 and self.config.username and attempt == 0:
+                    self._cookie = None
+                    continue
+                return {"error": str(exc)}
+            except Exception as exc:
+                return {"error": str(exc)}
+        return {"error": "qBittorrent authentication failed"}
 
     def _auth(self):
-        """Authenticate with qBittorrent."""
+        """Authenticate once without recursively entering _api_call."""
         data = {'username': self.config.username, 'password': self.config.password}
-        result = self._api_call('POST', 'auth/login', data)
-        if result and 'error' not in result:
-            self._auth_attempted = False
+        url = f"{self.config.url.rstrip('/')}/api/v2/auth/login"
+        req = urllib.request.Request(url, data=urllib.parse.urlencode(data).encode(),
+                                     headers={'User-Agent': settings.UA_SATOR}, method='POST')
+        try:
+            resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_QB)
+            body = resp.read().decode().strip()
+            self._cookie = resp.headers.get('Set-Cookie', '').split(';', 1)[0]
+            if body == 'Ok.' and self._cookie:
+                return True
+            self._cookie = None
+            return False
+        except Exception:
+            self._cookie = None
+            return False
 
     def add_torrent(self, magnet: str, category: str = "", tags: str = "",
                     ratio_limit: float = -1, seed_time: int = -1) -> dict:

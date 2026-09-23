@@ -246,7 +246,7 @@ class YTSIndexer(BaseIndexer):
 
     def search(self, query: str) -> List[TorrentResult]:
         sq = urllib.parse.quote(query)
-        url = f"https://yts.mx/api/v2/list_movies.json?query_term={sq}&limit={settings.YTS_API_LIMIT}"
+        url = f"{settings.YTS_API_BASE_URL}/api/v2/list_movies.json?query_term={sq}&limit={settings.YTS_API_LIMIT}"
         try:
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
@@ -484,7 +484,7 @@ _DETAIL_LANG_CODES = {
     'hebrew': 'he', 'עברית': 'he',
 }
 
-def _enrich_from_detail(result: TorrentResult) -> dict:
+def _enrich_from_detail(result: TorrentResult, timeout: float = None) -> dict:
     '''Fetch detail page and extract metadata not found in title.
     
     Returns dict with optional keys: languages, subs, quality_override.
@@ -497,7 +497,7 @@ def _enrich_from_detail(result: TorrentResult) -> dict:
         req = urllib.request.Request(result.info_url, headers={
             'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
         })
-        resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_DETAIL)
+        resp = urllib.request.urlopen(req, timeout=timeout or settings.TIMEOUT_DETAIL)
         html = resp.read().decode('utf-8', errors='replace')
     except Exception:
         return {}
@@ -686,70 +686,55 @@ class TorrentFunkIndexer(_YBLikeIndexer):
 # ── AniLibria (anilibria.top) ────────────────────────────────────────────
 
 class AniLibriaIndexer(BaseIndexer):
-    """AniLibria anime torrent indexer via JSON API."""
+    """AniLibria anime torrent indexer via the current AniLiberty API."""
     name = "anilibria"
 
     def search(self, query: str) -> List[TorrentResult]:
-        import re as _re
         sq = urllib.parse.quote(query)
-        url = f"{settings.ANILIBRIA_API_URL}/releases/releases?search={sq}&limit={settings.ANILIBRIA_SEARCH_LIMIT}"
+        url = f"{settings.ANILIBRIA_API_URL}/app/search/releases?query={sq}"
         try:
             req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_ANILIBRIA)
-            raw = json.loads(resp.read().decode())
+            releases = json.loads(resp.read().decode())
         except Exception as exc:
             raise TrackerSearchError(self.name, exc) from exc
-        # Defensive: ensure raw is a dict before calling .get()
-        if not isinstance(raw, dict):
-            return []
-        # AniLibria API may return data wrapped in nested "data" key or directly
-        releases = raw.get('data', raw)
-        if isinstance(releases, dict):
-            releases = releases.get('data', [])
         if not isinstance(releases, list):
-            return []
+            raise TrackerSearchError(self.name, ValueError('unexpected search response'))
         results = []
-        for r in releases:
-            if not isinstance(r, dict):
+        last_error = None
+        for release in releases[:settings.ANILIBRIA_SEARCH_LIMIT]:
+            if not isinstance(release, dict) or not release.get('id'):
                 continue
-            # Extract title from various possible fields
-            names = r.get('names')
+            torrent_url = (f"{settings.ANILIBRIA_API_URL}/anime/torrents/release/"
+                           f"{release['id']}")
+            try:
+                req = urllib.request.Request(torrent_url,
+                                             headers={'User-Agent': settings.UA_INDEXER})
+                resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_ANILIBRIA)
+                torrents = json.loads(resp.read().decode())
+                if not isinstance(torrents, list):
+                    raise ValueError('unexpected torrent response')
+            except Exception as exc:
+                last_error = exc
+                continue
+            names = release.get('name') or {}
             if not isinstance(names, dict):
                 names = {}
-            title = (r.get('name', '') or r.get('title', '') or
-                     names.get('ru', '') or names.get('en', ''))
-            if not isinstance(title, str) or not title.strip():
-                continue
-            title = title.strip()
-            # Extract magnet from torrent data
-            magnet = r.get('magnet', '') or r.get('torrent_magnet', '') or ''
-            if not isinstance(magnet, str):
-                magnet = ''
-            if not magnet:
-                torrents_data = r.get('torrents', {})
-                if isinstance(torrents_data, dict):
-                    for t in torrents_data.values():
-                        if isinstance(t, dict):
-                            magnet = t.get('magnet', '') or t.get('url', '') or ''
-                            if isinstance(magnet, str) and magnet:
-                                break
-                            magnet = ''
-                elif isinstance(torrents_data, list):
-                    for t in torrents_data:
-                        if isinstance(t, dict):
-                            magnet = t.get('magnet', '') or t.get('url', '') or ''
-                            if isinstance(magnet, str) and magnet:
-                                break
-                            magnet = ''
-            size_bytes = 0
-            seeders = 0
-            # Languages: check if title has Cyrillic
-            has_cyrillic = bool(_re.search(r'[а-яА-ЯёЁ]', title))
-            languages = ['ru'] if has_cyrillic else []
-            results.append(TorrentResult(
-                title=title, magnet=magnet, size_bytes=size_bytes,
-                seeders=seeders, source=self.name, languages=languages,
-            ))
+            for torrent in torrents:
+                if not isinstance(torrent, dict) or not torrent.get('magnet'):
+                    continue
+                title = (torrent.get('label') or names.get('main') or
+                         names.get('english') or '').strip()
+                if not title:
+                    continue
+                results.append(TorrentResult(
+                    title=title, magnet=torrent['magnet'],
+                    size_bytes=int(torrent.get('size') or 0),
+                    seeders=int(torrent.get('seeders') or 0),
+                    source=self.name, languages=['ru'],
+                ))
+        if not results and last_error:
+            raise TrackerSearchError(self.name, last_error) from last_error
         return results
 
 

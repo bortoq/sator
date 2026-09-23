@@ -38,6 +38,24 @@ def test_more_mode_sorts_strictly_by_seeders():
     assert [t['title'] for t in out['torrents']] == ['More seeds', 'Fewer seeds']
 
 
+def test_more_mode_deduplicates_before_display_and_never_adds(monkeypatch):
+    magnet = 'magnet:?xt=urn:btih:' + 'a' * 40
+    low = {'title': 'low', 'seeders': 4, 'size_bytes': 100, 'magnet': magnet}
+    high = {'title': 'high', 'seeders': 9, 'size_bytes': 200, 'magnet': magnet}
+    out = {'torrents': [low, high], 'magnets': [], 'display_lines': [],
+           'added': 0, 'found': 2, 'total_size': 300}
+    monkeypatch.setattr('sator.process._safe_qb_add',
+                        lambda *args, **kwargs: (_ for _ in ()).throw(
+                            AssertionError('qBittorrent must not be called')))
+
+    _select_best_or_sort(out, False, True, '', '', '', '')
+
+    assert out['torrents'] == [high]
+    assert out['found'] == 1
+    assert out['total_size'] == 200
+    assert out['display_lines'][0].endswith('high')
+
+
 def test_tracker_error_uses_bang_status_marker():
     status_chars = ['?'] * 13
     callback = _make_progress_cb(1, 1, 'test', False, status_chars, {}, {})

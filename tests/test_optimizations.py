@@ -15,7 +15,16 @@ from sator.indexer import (
     INDEXERS, TorrentResult,
 )
 from sator.queries import _build_queries
-from sator.runner import _run_search
+from sator.runner import _run_search, _build_filters
+
+
+def test_episode_inherits_original_language_and_subtitle_filter():
+    parsed = MockParsed()
+    orig_lang_map = {'Test Show S01': 'ja'}
+    filters = _build_filters(parsed, 'Test Show S01E01', orig_lang_map,
+                             [], [], True)
+    assert filters['lang'] == ['ja']
+    assert filters['subs'] == ['ja']
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

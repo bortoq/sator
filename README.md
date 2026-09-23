@@ -3,10 +3,10 @@
 Multi-tracker torrent search and filtering tool with qBittorrent integration.
 
 ```
-sator -s "Rick and Morty S07" -o results.url
-sator -s queries.txt -a                                          # search + auto-add
-sator -s queries.txt -v                                          # show all results with details
-sator -a downloads.txt                                           # add magnets from file
+sator "Rick and Morty S07" -o results.url
+sator queries.txt -a                                          # search + auto-add
+sator queries.txt -v                                          # show all results with details
+sator --add-file downloads.txt                                   # add magnets from file
 ```
 
 ## Features
@@ -15,10 +15,11 @@ sator -a downloads.txt                                           # add magnets f
 - **Filter pipeline**: resolution bounds, size bounds, language, subtitles, blacklist
 - **Language detection**: title parsing + Wikidata auto-detect (original language)
 - **Detail page enrichment**: scrapes metadata when title lacks language/subtitle info
-- **Best-mode**: scores and selects best result per query (default). Use `-m` to show all results
+- **Best-mode**: scores and selects best result per query (default). Use `-m` to show all results, sorted by seeders and deduplicated by info hash
 - **Fallback**: when no results pass filters, returns best filtered-out item (in **paused** state when auto-adding)
 - **Verbose output** (`-v`): shows all results including filtered-out (with reason)
 - **qBittorrent integration** (`-a`): auto-add found torrents
+- **Safe all-results mode**: `-a -m` warns and ignores `-a` so the full list is never downloaded automatically
 - **Blacklist**: built-in exclusion of CAM/TS/scrubbed releases
 - **Output file** (`-o FILE`): write magnets/URLs (suppress screen spam)
 - **Series expansion** (`-sn`): auto-expand season/episode ranges into individual queries
@@ -46,47 +47,48 @@ alias sator='python3 -m sator.cli'
 ### Basic search
 
 ```bash
-sator -s "Rick and Morty"
-sator -s "Lost Complete Series" --verbose
+sator "Rick and Morty"
+sator "Lost Complete Series" --verbose
+sator -m -o results.url "Slide 2023"            # options may precede the query
 ```
 
 ### Search with filters
 
 ```bash
 # Size and resolution bounds
-sator -s "Interstellar" -rl 1080 -rb 720 -zl 8g -zb 200m
+sator "Interstellar" -rl 1080 -rb 720 -zl 8g -zb 200m
 
 # Language filters
-sator -s "Amélie" -l fr                     # French audio
-sator -s "Parasite" -l                      # auto-detect original language via Wikidata
+sator "Amélie" -l fr                     # French audio
+sator "Parasite" -l                      # auto-detect original language via Wikidata
 
 # Subtitle filters (opt-in with -t)
-sator -s "Amélie" -t en                     # require English subtitles
-sator -s "Amélie" -t                        # auto-detect original language subtitles
-sator -s "Movie" -t en -t fr                # require both English AND French subs
+sator "Amélie" -t en                     # require English subtitles
+sator "Amélie" -t                        # auto-detect original language subtitles
+sator "Movie" -t en -t fr                # require both English AND French subs
 
 ```
 
 ### Search series (expand season/episode ranges)
 
-`-sn` takes only season/episode **numbers** (the title goes in `-s`).
+`-sn` takes only season/episode **numbers** (the title is the positional query).
 No value = all seasons. Repeat `-sn` for multiple independent blocks.
 
 ```bash
 # All episodes of season 1
-sator -s "Breaking Bad" -sn 1
+sator "Breaking Bad" -sn 1
 
 # All seasons (no number given)
-sator -s "Breaking Bad" -sn
+sator "Breaking Bad" -sn
 
 # Specific episodes — just list them one by one
-sator -s "Game of Thrones" -sn 1 1 2 3 4 5
+sator "Game of Thrones" -sn 1 1 2 3 4 5
 
 # Shell brace expansion works great for ranges
-sator -s "Game of Thrones" -sn 1 $(echo {1..5})
+sator "Game of Thrones" -sn 1 $(echo {1..5})
 
 # Two separate seasons
-sator -s "Better Call Saul" -sn 1 -sn 3
+sator "Better Call Saul" -sn 1 -sn 3
 ```
 
 ### Episode-level expansion (automatic)
@@ -96,7 +98,7 @@ sator automatically looks up the episode count from Wikidata (Wikipedia, no API 
 and searches for **both** the season pack and individual episodes:
 
 ```bash
-sator -s "Breaking Bad" -sn 1 -a
+sator "Breaking Bad" -sn 1 -a
 # Searches: "Breaking Bad S01" (season pack)
 #           "Breaking Bad S01E01" ... "Breaking Bad S01E07" (7 episodes)
 # Compares: pack seeders vs average episode seeders
@@ -119,7 +121,7 @@ Disable with `--no-episode-expansion`.
 Best-mode scores results and picks the best match per query:
 
 ```bash
-sator -s "Lost" -m                          # show all filtered results, sorted
+sator "Lost" -m                          # show all filtered results, sorted
 ```
 
 Scoring factors: seeders, resolution match, size range fit, trusted groups, source quality.
@@ -127,16 +129,16 @@ Scoring factors: seeders, resolution match, size range fit, trusted groups, sour
 ### File input
 
 ```bash
-sator -s queries.txt                        # one query per line, output to stdout
-sator -s queries.txt -o results.url         # write results to file
+sator queries.txt                        # one query per line, output to stdout
+sator queries.txt -o results.url         # write results to file
 ```
 
-When the argument to `-s` is an existing file, it is read line-by-line.
+When the positional argument is an existing file, it is read line-by-line.
 
 ### Auto-add to qBittorrent
 
 ```bash
-sator -s "Rick and Morty S07" -a
+sator "Rick and Morty S07" -a
 ```
 
 qBittorrent must be running with WebUI enabled at `http://localhost:8090/`.
@@ -146,7 +148,7 @@ Fallback results (torrents that did not pass filters) are added in **paused** st
 ### Sub-command: run
 
 ```bash
-sator run -s "Lost" -o lost.url
+sator run "Lost" -o lost.url
 ```
 
 The `run` sub-command is the default; all flags work identically.
@@ -156,26 +158,26 @@ The `run` sub-command is the default; all flags work identically.
 ```bash
 # Batch process your watchlist: search for multiple movies, pick best per query,
 # write magnets to file for later import
-sator -s watchlist.txt -o favorites.url -rl 1080 -l __original__ -t en
+sator watchlist.txt -o favorites.url -rl 1080 -l __original__ -t en
 
 # Find 4K HDR content with English audio and subtitles, auto-add to qBittorrent
-sator -s "Dune 2021" -rl 2160 -rb 2160 -l en -t en -a --tags "4K movies"
+sator "Dune 2021" -rl 2160 -rb 2160 -l en -t en -a --tags "4K movies"
 
 # Search for a TV series season across all trackers, show all results by seeders
-sator -s "Severance" -sn 2 -m                                    # search one season
+sator "Severance" -sn 2 -m                                    # search one season
 
 # Exclude dubbed/multi-audio releases and prefer BluRay source
-sator -s "The Matrix" -e MULTi,DUAL -rl 1080
+sator "The Matrix" -e MULTi,DUAL -rl 1080
 
 # Quick check: what's available for a query? Verbose mode shows filtered-out too
-sator -s "Interstellar 4K" -v
+sator "Interstellar 4K" -v
 
 # Nightly cron job: process a list of wanted movies, auto-add best matches,
 # adding in paused state if fallback kicks in
-sator -s /path/to/wanted.txt -a --tags "automated" -o /tmp/last_run.url
+sator /path/to/wanted.txt -a --tags "automated" -o /tmp/last_run.url
 
 # Import existing magnet links from a file into qBittorrent
-sator -a ~/Downloads/magnets.txt
+sator --add-file ~/Downloads/magnets.txt
 ```
 
 ## Options
@@ -215,32 +217,40 @@ Use `-t` without a value to require subtitles matching the original language.
 | `-v`, `--verbose` | Show all results including filtered-out (with `✗` prefix) |
 | `-tt`, `--tracker-titles` | Show tracker source per result |
 | `-m`, `--more` | Show **all** filtered results instead of best-only (disable best-mode) |
+| `-a -m` | List unique torrents without auto-adding; `-a` is ignored with a warning |
 | `-o FILE` | Write output to file (suppresses magnet URIs on stderr) |
-| `-sn [S] [E] ...` | Series season/episode numbers. No value = all seasons. Needs `-s` for the title |
+| `-sn [S] [E] ...` | Series season/episode numbers. No value = all seasons. The title is the positional query |
 | `--no-enrich` | Disable TMDB query enrichment |
 | `--no-episode-expansion` | Disable automatic episode-level expansion (`-sn` searches pack only) |
 | `--tmdb-key KEY` | TMDB API key |
 | `-a` | Auto-add found torrents to qBittorrent |
-| `--tags TAG [TAG ...]` | Tags to apply in qBittorrent (space-separated) |
+| `--add-file FILE` | Import magnet links from FILE into qBittorrent (`-a FILE` also works for existing magnet files) |
+| `--tags TAG` | Tags to apply in qBittorrent; quote multiple words or repeat the option |
 | `-e PATTERN` | Extra exclude pattern(s), comma-separated (e.g. `-e MULTi,DUAL`) |
 | `-h`, `--help` | Show help |
 
 ## Trackers
 
+Availability varies by network and date. During a direct check on 2026-09-23,
+Nyaa, TPB, YTS, YourBittorrent, TorrentFunk, Magnetz and RuTor answered;
+AniLibria answered after updating its API route. SolidTorrents had a redirect
+loop, EZTV and LimeTorrents returned 403, TGx did not resolve, and GloTorrents
+failed TLS negotiation. Use `-v` to see the reason behind each `!` status.
+
 | Tracker | Status | Notes |
 |---------|--------|-------|
 | **Nyaa** | ✅ Working | HTML scrape, anime + general |
 | **TPB** | ✅ Working | Multi-mirror fallback |
-| **YTS** | ✅ Working | JSON API, movies only |
-| **SolidTorrents** | ✅ Working | JSON API |
-| **EZTV** | ✅ Working | HTML scrape, TV shows |
-| **TorrentGalaxy (TGx)** | ✅ Working | HTML scrape |
-| **LimeTorrents** | ⛔ Blocked | Cloudflare-protected, kept for future use |
+| **YTS** | ✅ Responded | JSON API on official `yts.bz` domain, movies only |
+| **SolidTorrents** | ⚠ Redirect loop observed | JSON API |
+| **EZTV** | ⚠ HTTP 403 observed | HTML scrape, TV shows |
+| **TorrentGalaxy (TGx)** | ⚠ DNS failure observed | HTML scrape |
+| **LimeTorrents** | ⚠ HTTP 403 observed | Cloudflare-protected |
 | **YourBittorrent** | ✅ Working | JSON API |
 | **TorrentFunk** | ✅ Working | JSON API |
 | **Magnetz** | ✅ Working | JSON API |
-| **GloTorrents** | ✅ Working | HTML scrape |
-| **AniLibria** | ✅ Working | JSON API v1, Russian anime (dub) |
+| **GloTorrents** | ⚠ TLS failure observed | HTML scrape |
+| **AniLibria** | ✅ Responded | Current JSON API v1, Russian anime (dub) |
 | **RuTor** | ✅ Working | HTML scrape, Russian anime (dub) |
 
 All 13 listed trackers are enabled by default.
@@ -323,7 +333,7 @@ cd sator
 python3 -m pytest tests/
 ```
 
-303 tests covering: CLI parsing, filter pipeline, blacklist, scoring, magnet parsing, tracker integration (mocked HTTP), detail page enrichment, Wikidata lookup, series expansion.
+Tests cover CLI parsing, filter pipeline, blacklist, scoring, magnet parsing, tracker integration (mocked HTTP), detail page enrichment, Wikidata lookup, and series expansion.
 
 ## License
 

@@ -4,6 +4,8 @@
 import json
 import os
 import re
+import tempfile
+import time
 import urllib.parse
 import urllib.request
 from sator import settings
@@ -50,6 +52,8 @@ _NOISE_WORDS = (
 
 def _clean_query(raw: str) -> str:
     '''Remove torrent noise words from query for better search results.'''
+    # Shell escapes inside double quotes are passed literally to the program.
+    raw = re.sub(r'\\([ ()])', r'\1', raw)
     s = raw.lower()
     # Remove noise words
     for pat in _NOISE_WORDS:
@@ -59,141 +63,140 @@ def _clean_query(raw: str) -> str:
     s = s.strip(' -_').strip()
     return s or raw
 
-def get_wikidata_original_lang(query: str, cache_file: str = "") -> str:
-    """Get original language ISO code for a movie via Wikidata.
-    Returns ISO 639-1 code or empty string.
-    """
-    # Clean query: strip torrent noise words for better Wikipedia search
+def _wikidata_api(params: dict, deadline: float) -> dict:
+    """One bounded Wikidata API request; callers share the same deadline."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError('Wikidata lookup budget exhausted')
+    url = 'https://www.wikidata.org/w/api.php?' + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={'User-Agent': settings.UA_SATOR})
+    with urllib.request.urlopen(req, timeout=min(settings.WIKIDATA_LOOKUP_REQUEST_TIMEOUT,
+                                                 remaining)) as resp:
+        data = json.loads(resp.read().decode())
+    if 'error' in data:
+        raise ValueError(data['error'].get('info', 'Wikidata API error'))
+    return data
+
+
+def _entity_language(entity: dict, title: str, year: str) -> str:
+    """Accept a matching work and return its original-language code."""
+    labels = entity.get('labels', {})
+    label = labels.get('en', {}).get('value', '')
+    normalized = lambda value: re.sub(r'\W+', ' ', value.casefold()).strip()
+    if normalized(label) != normalized(title):
+        return ''
+    description = entity.get('descriptions', {}).get('en', {}).get('value', '').lower()
+    if not any(word in description for word in ('film', 'movie', 'series', 'anime', 'animation')):
+        return ''
+    claims = entity.get('claims', {})
+    if year:
+        dates = []
+        for prop in ('P577', 'P571', 'P580'):
+            for claim in claims.get(prop, []):
+                value = claim.get('mainsnak', {}).get('datavalue', {}).get('value', {})
+                if isinstance(value, dict):
+                    dates.append(value.get('time', '')[1:5])
+        if year not in dates and year not in description:
+            return ''
+    for prop in ('P364', 'P407', 'P2439'):
+        for claim in claims.get(prop, []):
+            lang_q = claim.get('mainsnak', {}).get('datavalue', {}).get('value', {})
+            if isinstance(lang_q, dict) and lang_q.get('id') in WIKIDATA_ISO:
+                return WIKIDATA_ISO[lang_q['id']]
+    return ''
+
+
+def get_wikidata_original_lang(query: str, cache_file: str = "", verbose: bool = False) -> str:
+    """Find original language directly in Wikidata, including films without enwiki."""
     query = _clean_query(query)
-    
-    # Check cache
-    if cache_file and os.path.exists(cache_file):
+    cache = {}
+    if cache_file:
         try:
             with open(cache_file) as f:
                 cache = json.load(f)
-            if query in cache:
-                return cache[query]
-        except (json.JSONDecodeError, OSError):
-            pass
+            cached = cache.get(query)
+            if isinstance(cached, str):
+                return cached
+            if isinstance(cached, dict) and cached.get('expires', 0) > time.time():
+                return cached.get('lang', '')
+        except (OSError, ValueError, TypeError):
+            cache = {}
 
+    year_match = re.search(r'\b((?:19|20)\d{2})\b', query)
+    year = year_match.group(1) if year_match else ''
+    title = re.sub(r'\s*\(?\b(?:19|20)\d{2}\b\)?\s*$', '', query).strip()
+    if not title:
+        title = query
+    deadline = time.monotonic() + settings.WIKIDATA_LOOKUP_BUDGET
+    iso = ''
     try:
-        # 1. Wikipedia search — try multiple queries, iterate results
-        queries_to_try = [
-            query,
-            query + ' film',
-            query + ' TV series',
+        # Entity search provides labels and descriptions in one response. Use
+        # them to fetch only plausible works, avoiding large unrelated items.
+        searches = [
+            {'action': 'wbsearchentities', 'search': title, 'language': 'en',
+             'type': 'item', 'limit': 20, 'format': 'json'},
+            # Full-text fallback also searches descriptions and reaches works
+            # outside the first page of entity-name search results.
+            {'action': 'query', 'list': 'search',
+             'srsearch': f'{title} {year} film'.strip() if year else title,
+             'srnamespace': 0, 'srlimit': 10, 'format': 'json'},
         ]
-        def _get_lang_for_title(wp_title):
-            params = urllib.parse.urlencode({
-                'action': 'query', 'prop': 'pageprops',
-                'titles': wp_title, 'format': 'json'
-            })
-            req = urllib.request.Request(
-                f'https://en.wikipedia.org/w/api.php?{params}',
-                headers={'User-Agent': settings.UA_SATOR}
-            )
-            resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
-            eid = None
-            for pid, pdata in resp.get('query', {}).get('pages', {}).items():
-                if 'pageprops' in pdata and 'wikibase_item' in pdata['pageprops']:
-                    eid = pdata['pageprops']['wikibase_item']
-                    break
-            if not eid:
-                return ""
-            # 3. Get Wikidata entity
-            req = urllib.request.Request(
-                f'https://www.wikidata.org/wiki/Special:EntityData/{eid}.json',
-                headers={'User-Agent': settings.UA_SATOR}
-            )
-            resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
-            claims = resp.get('entities', {}).get(eid, {}).get('claims', {})
-            lang_claim = claims.get('P364', []) or claims.get('P407', []) or claims.get('P2439', [])
-            if not lang_claim:
-                return ""
-            lang_q = lang_claim[0].get('mainsnak', {}).get('datavalue', {}).get('value', {}).get('id', '')
-            if not lang_q:
-                return ""
-            return WIKIDATA_ISO.get(lang_q, "")
-
-        iso = ""
-        for sq in queries_to_try:
-            params = urllib.parse.urlencode({
-                'action': 'query', 'list': 'search',
-                'srsearch': sq, 'format': 'json', 'srlimit': settings.WIKIPEDIA_SRLIMIT
-            })
-            req = urllib.request.Request(
-                f'https://en.wikipedia.org/w/api.php?{params}',
-                headers={'User-Agent': settings.UA_SATOR}
-            )
-            resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
-            pages = resp.get('query', {}).get('search', [])
-            if not pages:
+        for params in searches:
+            found = _wikidata_api(params, deadline)
+            candidates = {}
+            if params['action'] == 'wbsearchentities':
+                for item in found.get('search', []):
+                    label = item.get('label', '')
+                    description = item.get('description', '').lower()
+                    if (re.sub(r'\W+', ' ', label.casefold()).strip() ==
+                            re.sub(r'\W+', ' ', title.casefold()).strip() and
+                            any(word in description for word in ('film', 'movie', 'series', 'anime')) and
+                            (not year or year in description)):
+                        candidates[item.get('id', '')] = item
+                ids = list(candidates)
+            else:
+                ids = [item.get('title', '') for item in found.get('query', {}).get('search', [])]
+            ids = [item for item in ids if re.fullmatch(r'Q\d+', item)]
+            if not ids:
                 continue
-            # Extract meaningful words from the cleaned query for relevance
-            query_words = set(w for w in re.sub(r'[^a-z0-9 ]', ' ', query).split() if len(w) > 1)
-            for p in pages:
-                # Skip if the result title doesn't share at least one word with
-                # the original query — avoids false positives from unrelated pages
-                if query_words:
-                    title_lower = p['title'].lower()
-                    if not any(w in title_lower for w in query_words):
-                        continue
-                iso = _get_lang_for_title(p['title'])
+            entities = _wikidata_api({'action': 'wbgetentities', 'ids': '|'.join(ids),
+                                     'props': ('claims' if candidates else
+                                               'claims|labels|descriptions'),
+                                     'languages': 'en', 'format': 'json'}, deadline)
+            for entity_id in ids:
+                entity = entities.get('entities', {}).get(entity_id, {})
+                if entity_id in candidates:
+                    entity = dict(entity)
+                    entity['labels'] = {'en': {'value': candidates[entity_id]['label']}}
+                    entity['descriptions'] = {'en': {'value': candidates[entity_id]['description']}}
+                iso = _entity_language(entity, title, year)
                 if iso:
                     break
             if iso:
                 break
-        if not iso:
-            # ── Fuzzy fallback via Wikipedia opensearch ──
-            # If exact Wikipedia search fails (e.g. typo "bojack horsman"),
-            # use opensearch which suggests corrected titles.
+    except (OSError, ValueError, TimeoutError) as exc:
+        # Network failures are transient: don't cache them as a missing title.
+        if verbose:
+            import sys
+            print(f'Wikidata lookup failed for {query}: {exc}', file=sys.stderr)
+        return ''
+
+    if cache_file:
+        try:
+            cache[query] = iso if iso else {'lang': '', 'expires': time.time() + 3600}
+            directory = os.path.dirname(os.path.abspath(cache_file))
+            os.makedirs(directory, exist_ok=True)
+            fd, temp_path = tempfile.mkstemp(prefix='.wikilang-', dir=directory)
             try:
-                params = urllib.parse.urlencode({
-                    'action': 'opensearch',
-                    'search': query, 'limit': '3', 'format': 'json',
-                })
-                req = urllib.request.Request(
-                    f'https://en.wikipedia.org/w/api.php?{params}',
-                    headers={'User-Agent': settings.UA_SATOR}
-                )
-                resp = json.loads(urllib.request.urlopen(req, timeout=settings.TIMEOUT_WIKIDATA).read().decode())
-                # resp[1] is the list of suggestion titles
-                suggestions = resp[1] if len(resp) >= 2 else []
-                for suggestion in suggestions:
-                    # Verify suggestion shares words with query (relevance)
-                    sug_words = set(w for w in re.sub(r'[^a-z0-9 ]', ' ', suggestion.lower()).split() if len(w) > 2)
-                    qry_words = set(w for w in re.sub(r'[^a-z0-9 ]', ' ', query.lower()).split() if len(w) > 2)
-                    if qry_words and sug_words:
-                        overlap = qry_words & sug_words
-                        if not overlap:
-                            continue
-                    iso = _get_lang_for_title(suggestion)
-                    if iso:
-                        break
-            except Exception:
-                pass
-
-        if not iso:
-            return ""
-
-
-        # Cache result
-        if iso and cache_file:
-            try:
-                cache = {}
-                if os.path.exists(cache_file):
-                    with open(cache_file) as f:
-                        cache = json.load(f)
-                cache[query] = iso
-                os.makedirs(os.path.dirname(cache_file), exist_ok=True)
-                with open(cache_file, 'w') as f:
+                with os.fdopen(fd, 'w') as f:
                     json.dump(cache, f)
-            except OSError:
-                pass
-
-        return iso
-    except Exception:
-        return ""
+                os.replace(temp_path, cache_file)
+            finally:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+        except OSError:
+            pass
+    return iso
 
 
 

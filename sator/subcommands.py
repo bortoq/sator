@@ -18,6 +18,7 @@ from sator.process import _process_query_internal, TRACKER_LABELS
 from sator.qb_client import QBClient, QBConfig
 from sator import settings
 from sator.series import expand_series_queries
+from sator.dedup import deduplicate_torrents
 
 
 def cmd_parse_languages(args: List[str]):
@@ -249,6 +250,10 @@ def cmd_process_query(args: List[str]):
         sys.exit(e.code)
 
     tags_str = ' '.join(parsed.tags) if parsed.tags else ''
+    if parsed.more and parsed.qb_add:
+        print('⚠ --qb-add is ignored with -m: listing all results will not add torrents.',
+              file=sys.stderr)
+        parsed.qb_add = False
     query = ' '.join(parsed.query)
     if parsed.season_number:
         queries = expand_series_queries(query, parsed.season_number)
@@ -293,6 +298,18 @@ def cmd_process_query(args: List[str]):
         merged['torrents'].extend(r.get('torrents', []))
         merged['display_lines'].extend(r.get('display_lines', []))
     if parsed.more:
+        merged['torrents'] = deduplicate_torrents(merged['torrents'])
         merged['torrents'].sort(key=lambda t: -t.get('seeders', 0))
+        merged['found'] = len(merged['torrents'])
+        merged['total_size'] = sum(t.get('size_bytes', 0) for t in merged['torrents'])
         merged['magnets'] = [t['magnet'] for t in merged['torrents'] if t.get('magnet')]
+        merged['display_lines'] = []
+        for torrent in merged['torrents']:
+            marker = '⚠' if torrent.get('_fallback') else '✓'
+            merged['display_lines'].append(f"  {marker} {torrent.get('title', '')}")
+            merged['display_lines'].append(
+                f"    {torrent.get('quality_label', '')} "
+                f"({torrent.get('size_h', '')}) seeds:{torrent.get('seeders', 0)}")
+            if torrent.get('magnet') and not parsed.output:
+                merged['display_lines'].append(f"    {torrent['magnet']}")
     print(json.dumps(merged))

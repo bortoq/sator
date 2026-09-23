@@ -1,6 +1,8 @@
 """Tests for Russian anime trackers: AniLibria and RuTor."""
 import sys
 import os
+import json
+from unittest.mock import MagicMock
 import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -68,6 +70,32 @@ def test_anilibria_reports_network_error(monkeypatch):
 
 def test_rutor_reports_network_error(monkeypatch):
     _assert_network_error(RuTorIndexer(), monkeypatch)
+
+
+def test_anilibria_uses_current_search_and_torrent_api(monkeypatch):
+    urls = []
+
+    def fake_urlopen(request, timeout):
+        urls.append(request.full_url)
+        response = MagicMock()
+        if '/app/search/releases?' in request.full_url:
+            payload = [{'id': 413, 'name': {'main': 'Наруто'}}]
+        else:
+            payload = [{'label': 'Наруто 720p', 'magnet': 'magnet:?xt=urn:btih:' + 'a' * 40,
+                        'size': 1234, 'seeders': 18}]
+        response.read.return_value = json.dumps(payload).encode()
+        return response
+
+    monkeypatch.setattr('sator.indexer.urllib.request.urlopen', fake_urlopen)
+
+    results = AniLibriaIndexer().search('naruto')
+
+    assert len(results) == 1
+    assert results[0].seeders == 18
+    assert results[0].size_bytes == 1234
+    assert results[0].languages == ['ru']
+    assert '/app/search/releases?query=naruto' in urls[0]
+    assert urls[1].endswith('/anime/torrents/release/413')
 
 
 def test_search_all_with_anilibria():
