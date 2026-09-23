@@ -24,9 +24,8 @@ def test_dash_help_with_args():
         cmd_run(['-help', '-s', 'test'])
     except SystemExit as e:
         assert e.code == 0, f'-help with args should exit 0, got {e.code}'
-    except Exception:
-        # Any other exception means -help wasn't properly handled
-        pass
+    except Exception as exc:
+        raise AssertionError('-help must not mask a CLI error') from exc
     else:
         pass
 

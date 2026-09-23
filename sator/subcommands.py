@@ -292,4 +292,7 @@ def cmd_process_query(args: List[str]):
         merged['magnets'].extend(r.get('magnets', []))
         merged['torrents'].extend(r.get('torrents', []))
         merged['display_lines'].extend(r.get('display_lines', []))
+    if parsed.more:
+        merged['torrents'].sort(key=lambda t: -t.get('seeders', 0))
+        merged['magnets'] = [t['magnet'] for t in merged['torrents'] if t.get('magnet')]
     print(json.dumps(merged))

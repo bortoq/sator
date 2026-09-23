@@ -289,6 +289,11 @@ def _run_search(parsed, queries, _series_meta, _series_plan,
                      found_count, total_size_val, all_torrents,
                      added_count, tags_str, auto_add)
 
+    # ``-m`` promises a single ordering across all queries, not just within
+    # each query's tracker results.
+    if parsed.more:
+        all_torrents.sort(key=lambda t: -t.get('seeders', 0))
+
     return {
         'found_count': sum(found_count),
         'added_count': sum(added_count),

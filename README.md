@@ -11,7 +11,7 @@ sator -a downloads.txt                                           # add magnets f
 
 ## Features
 
-- **11 torrent trackers**: Nyaa, TPB, YTS, SolidTorrents, EZTV, TorrentGalaxy (TGx), LimeTorrents (blocked), YourBittorrent, TorrentFunk, Magnetz, GloTorrents
+- **13 torrent trackers**: Nyaa, TPB, YTS, SolidTorrents, EZTV, TorrentGalaxy (TGx), LimeTorrents, YourBittorrent, TorrentFunk, Magnetz, GloTorrents, AniLibria, RuTor
 - **Filter pipeline**: resolution bounds, size bounds, language, subtitles, blacklist
 - **Language detection**: title parsing + Wikidata auto-detect (original language)
 - **Detail page enrichment**: scrapes metadata when title lacks language/subtitle info
@@ -65,8 +65,6 @@ sator -s "Amélie" -t en                     # require English subtitles
 sator -s "Amélie" -t                        # auto-detect original language subtitles
 sator -s "Movie" -t en -t fr                # require both English AND French subs
 
-# Choose trackers
-sator -s "Lost" -T nyaa -T yts
 ```
 
 ### Search series (expand season/episode ranges)
@@ -163,7 +161,7 @@ sator -s watchlist.txt -o favorites.url -rl 1080 -l __original__ -t en
 # Find 4K HDR content with English audio and subtitles, auto-add to qBittorrent
 sator -s "Dune 2021" -rl 2160 -rb 2160 -l en -t en -a --tags "4K movies"
 
-# Search for a TV series season across all trackers, show all results sorted by score
+# Search for a TV series season across all trackers, show all results by seeders
 sator -s "Severance" -sn 2 -m                                    # search one season
 
 # Exclude dubbed/multi-audio releases and prefer BluRay source
@@ -218,10 +216,8 @@ Use `-t` without a value to require subtitles matching the original language.
 | `-tt`, `--tracker-titles` | Show tracker source per result |
 | `-m`, `--more` | Show **all** filtered results instead of best-only (disable best-mode) |
 | `-o FILE` | Write output to file (suppresses magnet URIs on stderr) |
-| `-T TRACKER` | Restrict search to specific tracker(s). Repeatable. |
 | `-sn [S] [E] ...` | Series season/episode numbers. No value = all seasons. Needs `-s` for the title |
-| `--enrich` | Enable TMDB enrichment (requires `--tmdb-key`) |
-| `--no-enrich` | Disable detail-page enrichment (lazy scrape of tracker pages) |
+| `--no-enrich` | Disable TMDB query enrichment |
 | `--no-episode-expansion` | Disable automatic episode-level expansion (`-sn` searches pack only) |
 | `--tmdb-key KEY` | TMDB API key |
 | `-a` | Auto-add found torrents to qBittorrent |
@@ -247,7 +243,7 @@ Use `-t` without a value to require subtitles matching the original language.
 | **AniLibria** | ✅ Working | JSON API v1, Russian anime (dub) |
 | **RuTor** | ✅ Working | HTML scrape, Russian anime (dub) |
 
-Default trackers (when `-T` not used): `nyaa`, `tpb`, `yourbittorrent`, `torrentfunk`, `magnetz`, `glotorrents`, `anilibria`, `rutor`.
+All 13 listed trackers are enabled by default.
 
 ## Performance
 
@@ -259,6 +255,10 @@ All trackers are searched **in parallel** per query via `ThreadPoolExecutor`. Fo
 2. **Phase 2** (weak packs): only seasons with weak packs (<10 seeders) get individual episode queries (`S01E01`, `S01E02`, …).
 
 This means for a well-seeded show you only search 1 query per season instead of 1 + N episode queries.
+
+In the compact progress line, `*` marks the selected source, `+` a matching
+source, `x` a source whose results were filtered out, `-` an empty response,
+and `!` a tracker request or parsing error.
 
 ### Disk cache
 

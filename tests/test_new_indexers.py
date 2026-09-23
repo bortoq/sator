@@ -1,12 +1,22 @@
 """Tests for new indexers: YTS, SolidTorrents, EZTV, TGx."""
 import sys
 import os
+import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from sator.indexer import (
     YTSIndexer, SolidTorrentsIndexer, EZTVIndexer, TGxIndexer, GloTorrentsIndexer,
-    TorrentResult, INDEXERS, search_all
+    INDEXERS, TrackerSearchError, search_all
 )
+
+
+def _assert_network_error(indexer, monkeypatch):
+    monkeypatch.setattr(
+        'sator.indexer.urllib.request.urlopen',
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError('offline')),
+    )
+    with pytest.raises(TrackerSearchError):
+        indexer.search('test')
 
 
 def test_yts_indexer_registered():
@@ -46,32 +56,20 @@ def test_all_indexers_have_search():
         assert callable(idx.search), f"{key} search is not callable"
 
 
-def test_search_returns_list():
-    """YTS search returns a list (empty on network error is OK)."""
-    idx = YTSIndexer()
-    result = idx.search("nonexistent_movie_xyz_2024")
-    assert isinstance(result, list)
+def test_yts_reports_network_error(monkeypatch):
+    _assert_network_error(YTSIndexer(), monkeypatch)
 
 
-def test_solidtorrents_search_returns_list():
-    """SolidTorrents search returns a list."""
-    idx = SolidTorrentsIndexer()
-    result = idx.search("nonexistent_query_xyz")
-    assert isinstance(result, list)
+def test_solidtorrents_reports_network_error(monkeypatch):
+    _assert_network_error(SolidTorrentsIndexer(), monkeypatch)
 
 
-def test_eztv_search_returns_list():
-    """EZTV search returns a list."""
-    idx = EZTVIndexer()
-    result = idx.search("nonexistent_show_xyz")
-    assert isinstance(result, list)
+def test_eztv_reports_network_error(monkeypatch):
+    _assert_network_error(EZTVIndexer(), monkeypatch)
 
 
-def test_tgx_search_returns_list():
-    """TGx search returns a list."""
-    idx = TGxIndexer()
-    result = idx.search("nonexistent_query_xyz")
-    assert isinstance(result, list)
+def test_tgx_reports_network_error(monkeypatch):
+    _assert_network_error(TGxIndexer(), monkeypatch)
 
 
 def test_search_all_with_new_trackers():
@@ -116,8 +114,5 @@ def test_glotorrents_indexer_registered():
     assert isinstance(INDEXERS['glotorrents'], GloTorrentsIndexer)
 
 
-def test_glotorrents_search_returns_list():
-    """GloTorrents search returns a list."""
-    idx = GloTorrentsIndexer()
-    result = idx.search("nonexistent_query_xyz")
-    assert isinstance(result, list)
+def test_glotorrents_reports_network_error(monkeypatch):
+    _assert_network_error(GloTorrentsIndexer(), monkeypatch)

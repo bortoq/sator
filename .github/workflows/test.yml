@@ -24,7 +24,10 @@ jobs:
       - name: Install package with dev dependencies
         run: |
           pip install -e .
-          pip install pytest
+          pip install pytest ruff
+
+      - name: Lint correctness checks
+        run: ruff check sator tests
 
       - name: Run tests
         run: python -m pytest tests/ -v

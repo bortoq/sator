@@ -97,9 +97,12 @@ def _magnet_has_valid_trackers(magnet: str) -> bool:
     except Exception:
         return True
     if parsed.scheme != 'magnet':
-        return True
+        return False
 
     params = urllib.parse.parse_qs(parsed.query)
+    xt_values = params.get('xt', [])
+    if not any(_is_valid_magnet_xt(value) for value in xt_values):
+        return False
     trackers = params.get('tr', [])
 
     if not trackers:
@@ -130,6 +133,15 @@ def _magnet_has_valid_trackers(magnet: str) -> bool:
                 return True
 
     return False
+
+
+def _is_valid_magnet_xt(value: str) -> bool:
+    """Accept only standard BitTorrent v1/v2 exact-topic identifiers."""
+    import re as _re
+    return bool(
+        _re.fullmatch(r'urn:btih:(?:[a-fA-F0-9]{40}|[A-Z2-7]{32})', value)
+        or _re.fullmatch(r'urn:btmh:1220[a-fA-F0-9]{64}', value)
+    )
 
 
 
@@ -443,11 +455,13 @@ def _filter_and_score_results(results, filters, query, query_series, out,
 
 
 def _select_best_or_sort(out, best_mode, qb_add, qb_url, category, tags, output_file):
-    """In best-mode: pick single best result. In not-best-mode: sort by score."""
-    # Not best-mode: sort all results by score
+    """In best-mode: pick single best result. In not-best-mode: sort by seeders."""
+    # ``-m`` is intended to show the most well-seeded results first.  Keep the
+    # score as a tie-breaker, but never let it move a result with fewer
+    # seeders ahead of one with more seeders.
     if not best_mode and out['torrents']:
         scored = [(t, _score_result(t)) for t in out['torrents']]
-        scored.sort(key=lambda x: (_seeder_bucket(x[0]), -x[1]))
+        scored.sort(key=lambda x: (-x[0].get('seeders', 0), -x[1]))
         out['torrents'] = [t for t, _ in scored]
         out['magnets'] = [t.get('magnet', '') for t in out['torrents'] if t.get('magnet')]
         out['display_lines'] = []
@@ -552,6 +566,9 @@ def _handle_fallback(out, _fallback_candidates, filters, best_mode,
             out['magnets'] = []
             out['total_size'] = 0
 
+            # Fallback results are also part of ``-m`` output, so use the
+            # same strict descending seeder order here.
+            scored.sort(key=lambda x: (-x[0].get('seeders', 0), -x[1]))
             for t, _ in scored:
                 size_bytes = t.get('size_bytes', 0)
                 seeders = t.get('seeders', 0)

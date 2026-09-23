@@ -1,11 +1,12 @@
 """Tests for Russian anime trackers: AniLibria and RuTor."""
 import sys
 import os
+import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from sator.indexer import (
     AniLibriaIndexer, RuTorIndexer,
-    TorrentResult, INDEXERS, search_all,
+    TorrentResult, INDEXERS, TrackerSearchError, search_all,
 )
 from sator import settings
 
@@ -50,20 +51,23 @@ def test_rutor_indexer_has_search():
     assert callable(idx.search)
 
 
-# ── Stub network tests (return list, may be empty on network error) ─────────
+# ── Network-error contract ─────────────────────────────────────────────────
 
-def test_anilibria_search_returns_list():
-    """AniLibria search returns a list (empty on no network/error is OK)."""
-    idx = AniLibriaIndexer()
-    result = idx.search("nonexistent_anime_xyz_2024")
-    assert isinstance(result, list)
+def _assert_network_error(indexer, monkeypatch):
+    monkeypatch.setattr(
+        'sator.indexer.urllib.request.urlopen',
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError('offline')),
+    )
+    with pytest.raises(TrackerSearchError):
+        indexer.search('test')
 
 
-def test_rutor_search_returns_list():
-    """RuTor search returns a list (empty on no network/error is OK)."""
-    idx = RuTorIndexer()
-    result = idx.search("nonexistent_anime_xyz_2024")
-    assert isinstance(result, list)
+def test_anilibria_reports_network_error(monkeypatch):
+    _assert_network_error(AniLibriaIndexer(), monkeypatch)
+
+
+def test_rutor_reports_network_error(monkeypatch):
+    _assert_network_error(RuTorIndexer(), monkeypatch)
 
 
 def test_search_all_with_anilibria():
@@ -169,20 +173,6 @@ def test_rutor_parse_torrent_result():
 
 
 # ── guard: empty query ─────────────────────────────────────────────────────
-
-def test_anilibria_search_empty_string():
-    """AniLibria search with empty string returns a list."""
-    idx = AniLibriaIndexer()
-    # API may reject empty, so expect a list (possibly empty)
-    result = idx.search("")
-    assert isinstance(result, list)
-
-
-def test_rutor_search_empty_string():
-    """RuTor search with empty string returns a list."""
-    idx = RuTorIndexer()
-    result = idx.search("")
-    assert isinstance(result, list)
 
 # ── Language detection in indexers ───────────────────────────────────────
 

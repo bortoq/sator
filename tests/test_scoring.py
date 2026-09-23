@@ -3,7 +3,10 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from sator.process import _score_result
+from sator.process import (
+    _make_progress_cb, _magnet_has_valid_trackers, _score_result,
+    _select_best_or_sort,
+)
 
 
 def test_score_seeders():
@@ -18,6 +21,36 @@ def test_score_seeders():
     assert s2 > s1, "More seeders should score higher"
     assert s1 == 50.0, f"Expected 50.0, got {s1}"
     assert s2 == 100.0, f"Expected 100.0 (capped), got {s2}"
+
+
+def test_more_mode_sorts_strictly_by_seeders():
+    """The ``-m`` ordering must put the largest seeder count first."""
+    torrents = [
+        {'title': 'Fewer seeds', 'seeders': 9, 'size_bytes': 1,
+         '_quality': {'source': '', 'resolution': 0}},
+        {'title': 'More seeds', 'seeders': 10, 'size_bytes': 10_000_000_000,
+         '_quality': {'source': '', 'resolution': 0}},
+    ]
+    out = {'torrents': torrents, 'magnets': [], 'display_lines': [], 'added': 0}
+
+    _select_best_or_sort(out, False, False, '', '', '', '')
+
+    assert [t['title'] for t in out['torrents']] == ['More seeds', 'Fewer seeds']
+
+
+def test_tracker_error_uses_bang_status_marker():
+    status_chars = ['?'] * 13
+    callback = _make_progress_cb(1, 1, 'test', False, status_chars, {}, {})
+
+    callback('nyaa', 'error', 0, 'offline')
+
+    assert status_chars[0] == '!'
+
+
+def test_only_valid_bittorrent_magnets_pass_validation():
+    assert _magnet_has_valid_trackers('magnet:?xt=urn:btih:' + 'a' * 40)
+    assert not _magnet_has_valid_trackers('https://example.invalid/file.torrent')
+    assert not _magnet_has_valid_trackers('magnet:?xt=urn:btih:not-a-hash')
 
 
 def test_score_source():

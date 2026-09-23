@@ -12,6 +12,7 @@ from typing import List, Callable, Dict, Any, Optional
 from sator.quality import QualityInfo
 from sator import settings
 import hashlib
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -26,6 +27,15 @@ class TorrentResult:
     info_url: str = ""
     quality: QualityInfo = field(default_factory=QualityInfo)
     languages: List[str] = field(default_factory=list)
+
+
+class TrackerSearchError(RuntimeError):
+    """A tracker could not be queried (as distinct from an empty result set)."""
+
+    def __init__(self, tracker: str, cause: Exception):
+        super().__init__(f"{tracker}: {cause}")
+        self.tracker = tracker
+        self.cause = cause
 
 
 class BaseIndexer:
@@ -47,8 +57,8 @@ class NyaaIndexer(BaseIndexer):
         try:
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_NYAA)
             html = resp.read().decode('utf-8', errors='replace')
-        except Exception:
-            return []
+        except Exception as exc:
+            raise TrackerSearchError(self.name, exc) from exc
 
         results = []
         rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL)
@@ -104,6 +114,7 @@ class TPBIndexer(BaseIndexer):
     def search(self, query: str) -> List[TorrentResult]:
         sq = urllib.parse.quote(query)
         page_html = None
+        last_error = None
         for mirror in self.mirrors:
             url = f"{mirror}/search/{sq}/1/99/0"
             try:
@@ -114,11 +125,14 @@ class TPBIndexer(BaseIndexer):
                 page_html = resp.read().decode('utf-8', errors='replace')
                 if page_html and 'magnet:' in page_html:
                     break
-            except Exception:
+            except Exception as exc:
+                last_error = exc
                 continue
             page_html = None
 
         if not page_html:
+            if last_error:
+                raise TrackerSearchError(self.name, last_error) from last_error
             return []
 
         results = []
@@ -180,8 +194,10 @@ class LimeTorrentsIndexer(BaseIndexer):
             })
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_LIMETORRENTS)
             html = resp.read().decode('utf-8', errors='replace')
-        except Exception:
-            pass
+        except Exception as exc:
+            get_error = exc
+        else:
+            get_error = None
 
         # Check for Cloudflare block
         if html and ('access denied' in html.lower() or 'just a moment' in html.lower() or 'cloudflare' in html.lower()):
@@ -201,10 +217,12 @@ class LimeTorrentsIndexer(BaseIndexer):
                 )
                 resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_LIMETORRENTS)
                 html = resp.read().decode('utf-8', errors='replace')
-            except Exception:
-                return []
+            except Exception as exc:
+                raise TrackerSearchError(self.name, exc) from exc
 
         if not html or ('access denied' in html.lower() or 'cloudflare' in html.lower()):
+            if get_error:
+                raise TrackerSearchError(self.name, get_error) from get_error
             return []
 
         results = []
@@ -235,8 +253,8 @@ class YTSIndexer(BaseIndexer):
             })
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_YTS)
             data = json.loads(resp.read().decode())
-        except Exception:
-            return []
+        except Exception as exc:
+            raise TrackerSearchError(self.name, exc) from exc
 
         movies = data.get('data', {}).get('movies', [])
         if not movies:
@@ -305,8 +323,8 @@ class SolidTorrentsIndexer(BaseIndexer):
             })
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_SOLIDTORRENTS)
             data = json.loads(resp.read().decode())
-        except Exception:
-            return []
+        except Exception as exc:
+            raise TrackerSearchError(self.name, exc) from exc
 
         items = data.get('results', []) if isinstance(data, dict) else []
         results = []
@@ -343,8 +361,8 @@ class EZTVIndexer(BaseIndexer):
             })
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_EZTV)
             html = resp.read().decode('utf-8', errors='replace')
-        except Exception:
-            return []
+        except Exception as exc:
+            raise TrackerSearchError(self.name, exc) from exc
 
         results = []
         for row in re.findall(r'<tr[^>]*name="hover"[^>]*>(.*?)</tr>', html, re.DOTALL):
@@ -395,8 +413,8 @@ class TGxIndexer(BaseIndexer):
             })
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_TGX)
             html = resp.read().decode('utf-8', errors='replace')
-        except Exception:
-            return []
+        except Exception as exc:
+            raise TrackerSearchError(self.name, exc) from exc
 
         results = []
         for row in re.findall(r'<div[^>]*class="[^"]*tgxtable[^"]*"[^>]*>(.*?)</div>\s*</div>', html, re.DOTALL):
@@ -550,8 +568,8 @@ class MagnetzIndexer(BaseIndexer):
             req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_MAGNETZ)
             data = json.loads(resp.read().decode())
-        except Exception:
-            return []
+        except Exception as exc:
+            raise TrackerSearchError(self.name, exc) from exc
         items = data.get('data', [])
         results = []
         for item in items:
@@ -587,8 +605,8 @@ class GloTorrentsIndexer(BaseIndexer):
             })
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_GLOTORRENTS)
             html = resp.read().decode('utf-8', errors='replace')
-        except Exception:
-            return []
+        except Exception as exc:
+            raise TrackerSearchError(self.name, exc) from exc
         results = []
         for row in re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL):
             if '<th' in row:
@@ -637,8 +655,8 @@ class _YBLikeIndexer(BaseIndexer):
             req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_YB_LIKE)
             data = json.loads(resp.read().decode())
-        except Exception:
-            return []
+        except Exception as exc:
+            raise TrackerSearchError(self.name, exc) from exc
         raw = data.get('results', [])
         results = []
         for r in raw:
@@ -679,8 +697,8 @@ class AniLibriaIndexer(BaseIndexer):
             req = urllib.request.Request(url, headers={'User-Agent': settings.UA_INDEXER})
             resp = urllib.request.urlopen(req, timeout=settings.TIMEOUT_ANILIBRIA)
             raw = json.loads(resp.read().decode())
-        except Exception:
-            return []
+        except Exception as exc:
+            raise TrackerSearchError(self.name, exc) from exc
         # Defensive: ensure raw is a dict before calling .get()
         if not isinstance(raw, dict):
             return []
@@ -745,6 +763,7 @@ class RuTorIndexer(BaseIndexer):
         import re as _re
         sq = urllib.parse.quote(query)
         results = []
+        last_error = None
         mirrors = list(settings.RUTOR_MIRRORS)
         if not mirrors:
             mirrors = ['https://rutor.info']
@@ -808,8 +827,11 @@ class RuTorIndexer(BaseIndexer):
                 # If we got results from this mirror, stop
                 if results:
                     break
-            except Exception:
+            except Exception as exc:
+                last_error = exc
                 continue
+        if not results and last_error:
+            raise TrackerSearchError(self.name, last_error) from last_error
         return results
 
 
@@ -833,6 +855,7 @@ INDEXERS = {
 # ── Search result cache (disk, TTL 5 min) ─────────────────────────────────
 
 _SEARCH_CACHE_TTL = settings.SEARCH_CACHE_TTL
+_CACHE_SAVE_LOCK = threading.Lock()
 
 def _search_cache_dir() -> str:
     """Get cache directory, creating if needed at call time."""
@@ -858,17 +881,45 @@ def _search_cache_load() -> dict:
     return {}
 
 def _search_cache_save(cache: dict):
-    """Save search cache to disk (prune expired entries)."""
+    """Atomically save search cache, preserving entries from other processes."""
     try:
-        now = time.time()
-        expired = [k for k, v in cache.items() if now - v.get('_ts', 0) > _SEARCH_CACHE_TTL]
-        for k in expired:
-            del cache[k]
         cachedir = _search_cache_dir()
         os.makedirs(cachedir, exist_ok=True)
         cache_path = os.path.join(cachedir, settings.SEARCH_CACHE_FILE)
-        with open(cache_path, 'w') as f:
-            json.dump(cache, f, indent=2)
+        lock_path = cache_path + '.lock'
+        with _CACHE_SAVE_LOCK, open(lock_path, 'a+') as lock_file:
+            try:
+                import fcntl
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            except ImportError:  # Windows has no fcntl; the in-process lock still applies.
+                pass
+            try:
+                disk_cache = _search_cache_load()
+                merged = {**disk_cache, **cache}
+                now = time.time()
+                fresh = {
+                    key: value for key, value in merged.items()
+                    if now - value.get('_ts', 0) <= _SEARCH_CACHE_TTL
+                }
+                fd, temp_path = tempfile.mkstemp(prefix='.cache-', dir=cachedir)
+                try:
+                    with os.fdopen(fd, 'w') as temp_file:
+                        json.dump(fresh, temp_file, indent=2)
+                        temp_file.flush()
+                        os.fsync(temp_file.fileno())
+                    os.chmod(temp_path, 0o600)
+                    os.replace(temp_path, cache_path)
+                finally:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+                cache.clear()
+                cache.update(fresh)
+            finally:
+                try:
+                    import fcntl
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                except ImportError:
+                    pass
     except OSError:
         pass
 
@@ -902,13 +953,7 @@ def _search_one_tracker(query: str, name: str,
     indexer = INDEXERS.get(name)
     if not indexer:
         return 0
-    # Guard indexer.search() with try/except
-    try:
-        raw = indexer.search(query)
-    except Exception as e:
-        if progress_cb:
-            progress_cb(name, 'error', 0, str(e))
-        return 0
+    raw = indexer.search(query)
     raw_dicts = []
     for r in raw:
         raw_dicts.append({
@@ -983,4 +1028,3 @@ def search_all(query: str, trackers: List[str] = None,
 
     _search_cache_save(cache)
     return results
-

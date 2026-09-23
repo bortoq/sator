@@ -202,6 +202,7 @@ Filters (each at most once):
     
     # ── Wikidata language / subtitle resolution ────────────────────────────
     orig_lang_map = {}
+    unresolved_original_lang = []
     has_original = '__original__' in parsed.lang
     lang_filters = [l for l in parsed.lang if l != '__original__']
     has_original_subs = parsed.subs and '__original__' in parsed.subs
@@ -227,11 +228,17 @@ Filters (each at most once):
                     _first_lang_shown = True
             else:
                 orig_lang_map[q] = ''
+                unresolved_original_lang.append(q)
                 if not _first_lang_shown:
                     print(file=sys.stderr)  # newline after header
                     _first_lang_shown = True
         if not _first_lang_shown:
             print(file=sys.stderr)  # ensure newline if no langs found
+    if unresolved_original_lang:
+        shown = ', '.join(unresolved_original_lang[:3])
+        suffix = '…' if len(unresolved_original_lang) > 3 else ''
+        print(f'⚠ Original language was unavailable for {shown}{suffix}; '
+              'the language filter is skipped for those queries.', file=sys.stderr)
     
     # ── Resolution helpers ─────────────────────────────────────────────────
     def _res_int(val):
